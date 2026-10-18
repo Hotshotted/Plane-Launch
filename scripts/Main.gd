@@ -327,12 +327,12 @@ func _update_camera(dt: float) -> void:
 	var ky: float
 	if state == STATE_SHOP:
 		# Frame the ramp in the upper part of the screen, above the shop panel.
-		var ramp_h := flight.ramp_top.y + 2.0
+		var ramp_h := flight.ramp_top.y + 6.0
 		var avail := 640.0
 		tp = minf(Tuning.view_scale, avail / ramp_h)
 		var ground_sy := minf(790.0, avail + 150.0)
 		tb = (ground_sy - size.y) / tp
-		tx = flight.ramp_top.x - 3.0
+		tx = flight.ramp_top.x - 6.0
 		kx = 6.0
 		ky = 6.0
 	else:

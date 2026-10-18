@@ -6,6 +6,7 @@ extends Node2D
 ## once, particles live in a fixed pool, text comes from cached strings.
 
 const OUTLINE := 3.0
+const GLIDER_SCALE := 1.3
 const PARTICLES := 72
 const MAX_SIDES := 16
 
@@ -191,8 +192,9 @@ func _poly(tpl: PackedVector2Array, o: Vector2, rot: float, sc: Vector2, col: Co
 func _poly_sq(tpl: PackedVector2Array, o: Vector2, rot: float, size_m: float, col: Color, lw: float = OUTLINE) -> void:
 	_poly(tpl, o, rot, Vector2(size_m, size_m) * _ppm, col, lw)
 
+## A rectangle centred at pixel (cx, cy), w x h pixels.
 func _rect_m(cx: float, cy: float, w: float, h: float, col: Color, rot: float = 0.0) -> void:
-	_poly(RECT, Vector2(cx, cy), rot, Vector2(w, h) * _ppm, col)
+	_poly(RECT, Vector2(cx, cy), rot, Vector2(w, h), col)
 
 func _hash(i: int) -> float:
 	var v := sin(float(i) * 12.9898 + 78.233) * 43758.5453
@@ -459,7 +461,7 @@ func _draw_glider() -> void:
 	var rot := -f.theta
 	if f.stall_amount > 0.0:
 		rot += sin(_time * 40.0) * 0.06 * f.stall_amount
-	var u := _ppm                      # meters -> pixels
+	var u := _ppm * GLIDER_SCALE       # meters -> pixels (drawn a bit bigger than life so the upgrades read)
 	var c := cos(rot)
 	var s := sin(rot)
 	var bl := f.lv_body
@@ -521,7 +523,7 @@ func _rot_pt(p: Vector2, c: float, s: float, u: float, o: Vector2) -> Vector2:
 ## A wing seen from the side-front: a slab above the fuselage with a slanted far edge.
 ## `chord` is its length in meters; the far edge slants up-back, longer with more lift.
 func _wing(o: Vector2, rot: float, root: Vector2, chord: float, col: Color, front: float) -> void:
-	var u := _ppm
+	var u := _ppm * GLIDER_SCALE
 	var c := cos(rot)
 	var s := sin(rot)
 	var depth := 0.55 + 0.05 * flight.lv_wings

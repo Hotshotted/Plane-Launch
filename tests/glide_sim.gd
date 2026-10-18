@@ -25,7 +25,17 @@ func fly(levels: Dictionary, seed_value: int, mode: int = 0):
 		t += 1.0 / 60.0
 	return f
 
+var _cache := {}
+
 func avg(levels: Dictionary, mode: int = 0) -> Dictionary:
+	var key := str(levels) + str(mode)
+	if _cache.has(key):
+		return _cache[key]
+	var r := _avg(levels, mode)
+	_cache[key] = r
+	return r
+
+func _avg(levels: Dictionary, mode: int) -> Dictionary:
 	var sum := 0.0
 	var scrap := 0.0
 	var mx := 0.0
@@ -43,6 +53,13 @@ func lv(r := 0, w := 0, b := 0, bo := 0, m := 0) -> Dictionary:
 
 func _initialize() -> void:
 	tn = root.get_node("Tuning")
+	var only_ladder := OS.get_cmdline_user_args().has("ladder")
+	if not only_ladder:
+		singles()
+	ladder()
+	quit(0)
+
+func singles() -> void:
 	var base := avg(lv())
 	print("BASE (all level 0), good pilot: %.0f m avg (min %.0f max %.0f), scrap %.0f" % [base["dist"], base["min"], base["max"], base["scrap"]])
 	for mode in [1, 2, 3]:
@@ -62,6 +79,8 @@ func _initialize() -> void:
 		var a := avg(lv(l, l, l, mini(l, 8), mini(l, 8)))
 		print("  all L%d: %.0f m avg, scrap %.0f (min %.0f max %.0f)" % [l, a["dist"], a["scrap"], a["min"], a["max"]])
 	# The economy: always buy the cheapest affordable upgrade, runs until everything is maxed.
+
+func ladder() -> void:
 	print("LADDER (buys the cheapest upgrade it can afford after each run):")
 	var levels := lv()
 	var scrap := 0.0
@@ -88,7 +107,7 @@ func _initialize() -> void:
 				levels[best_id] += 1
 				bought += 1
 				changed = true
-		if run <= 12 or run % 10 == 0:
+		if run <= 12 or run % 5 == 0:
 			print("  run %3d: %.0f m  scrap/run %.0f  upgrades bought %d  levels r%d w%d b%d bo%d m%d" % [run, a["dist"], a["scrap"], bought, levels["ramp"], levels["wings"], levels["body"], levels["booster"], levels["magnet"]])
 		var done := true
 		for u in tn.upgrades:
