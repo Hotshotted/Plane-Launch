@@ -17,6 +17,8 @@ var rng := RandomNumberGenerator.new()
 var state := STATE_SHOP
 var last_result := {}          # distance, earned, dist_scrap, picked, picked_count, new_best
 var runs_this_session := 0
+var daily_mode := false          # this flight is the Daily Launch
+var bonus_charge := 0            # free boost charges from a rewarded ad, used by the next launch
 var restart_count := 0
 
 # camera (smoothed)
@@ -24,6 +26,7 @@ var cam_x := 0.0
 var cam_bottom := 0.0
 var cam_ppm := 28.0
 var _snap_camera := true
+var _trail_t := 0.0
 var _kick := 0.0               # camera kick from a boost, 1 -> 0
 var _time := 0.0
 
@@ -55,6 +58,10 @@ func _ready() -> void:
 	hud.launch_pressed.connect(launch)
 	hud.buy_pressed.connect(_on_buy)
 	hud.frame_pressed.connect(_on_frame)
+	hud.cosmetic_pressed.connect(_on_cosmetic)
+	hud.daily_pressed.connect(launch_daily)
+	hud.ad_double_pressed.connect(_on_ad_double)
+	hud.ad_boost_pressed.connect(_on_ad_boost)
 	hud.launcher_pressed.connect(_on_launcher)
 	Save.changed.connect(_on_save_changed)
 	if DebugFlags.tune_enabled():
@@ -177,12 +184,14 @@ func _to_shop(snap: bool = true) -> void:
 	world.clear_particles()
 	world.show_aura = false
 	Save.ensure_missions(rng)
+	Save.refresh_daily()
 	Tuning.current_launcher = Save.launcher
+	_apply_style()
 	flight.reset(Save.loadout())
 	flight.best_x = Save.best_distance
 	_set_best_text()
 	hud.set_mode(Hud.MODE_SHOP)
-	hud.refresh_shop(last_result)
+	hud.refresh_shop(last_result, bonus_charge > 0)
 	_snap_camera = snap or _snap_camera
 
 func _set_best_text() -> void:
@@ -192,14 +201,31 @@ func _set_best_text() -> void:
 
 ## LAUNCH pressed: start a run, in place.
 func launch() -> void:
-	if state != STATE_SHOP or _warming:
+	_start_flight(false)
+
+## The Daily Launch: today's seeded world, with a target distance flag.
+func launch_daily() -> void:
+	_start_flight(true)
+
+func _start_flight(daily: bool) -> void:
+	if state != STATE_SHOP or _warming or hud.ad_active:
 		return
 	state = STATE_FLIGHT
+	daily_mode = daily
 	restart_count += 1
 	_skip_frames = Tuning.resume_skip_frames
-	_note_event("run started")
-	flight.reset(Save.loadout())
+	_note_event("daily run started" if daily else "run started")
+	Save.refresh_daily()
+	flight.reset(Save.loadout(), Save.daily_seed() if daily else -1)
 	flight.best_x = Save.best_distance
+	flight.target_x = float(Save.daily_target) if daily else 0.0
+	world.target_x = flight.target_x
+	if daily:
+		Save.daily_plays += 1
+	if bonus_charge > 0:   # a free boost from a rewarded ad, for this flight only
+		flight.charges += bonus_charge
+		flight.charges_max += bonus_charge
+		bonus_charge = 0
 	_set_best_text()
 	world.clear_particles()
 	world.show_aura = flight.lv_magnet > 0
@@ -207,6 +233,7 @@ func launch() -> void:
 		_touch_hold[i] = 0
 		_touch_boost[i] = 0
 	hud.set_mode(Hud.MODE_FLIGHT)
+	hud.set_daily_label("DAILY TARGET  %s m" % Tuning.fmt(Save.daily_target) if daily else "")
 	hud.show_hint(Save.runs < 2)
 	flight.launch()
 
@@ -220,16 +247,25 @@ func _finish_run() -> void:
 	var mission_bonus := 0
 	for md in done:
 		mission_bonus += int(md["reward"])
-	var earned: int = flight.scrap_total() + int(claim["bonus"]) + mission_bonus
+	var daily_info := {}
+	var daily_bonus := 0
+	if daily_mode:
+		Save.daily_best = maxf(Save.daily_best, floorf(flight.distance))
+		if flight.distance >= Save.daily_target and not Save.daily_claimed:
+			Save.daily_claimed = true
+			daily_bonus = Save.daily_reward()
+		daily_info = {"distance": floorf(flight.distance), "target": Save.daily_target, "bonus": daily_bonus}
+	var earned: int = flight.scrap_total() + int(claim["bonus"]) + mission_bonus + daily_bonus
+	Save.flights_since_ad += 1
 	var new_best := Save.record_run(flight.distance, earned)
 	var line := Rusty.comment({"new_best": new_best, "distance": flight.distance, "best_before": best_before, "mission_done": not done.is_empty(),
-			"new_zone": claim["new"] > 0, "stall_time": flight.stall_time, "bird_hits": flight.bird_hits, "run": Save.runs})
+			"new_zone": claim["new"] > 0, "daily_reached": daily_bonus > 0, "stall_time": flight.stall_time, "bird_hits": flight.bird_hits, "run": Save.runs})
 	runs_this_session += 1
 	last_result = {
 		"distance": floorf(flight.distance), "earned": earned, "dist_scrap": flight.scrap_for_distance(),
 		"picked": flight.picked_value, "picked_count": flight.picked_count, "new_best": new_best,
 		"zone_bonus": claim["bonus"], "zone": flight.zone_max, "new_zones": claim["new"],
-		"mission_bonus": mission_bonus, "missions": done, "rusty": line,
+		"mission_bonus": mission_bonus, "missions": done, "rusty": line, "daily": daily_info, "doubled": false,
 	}
 	_finish_timer = 0.0
 
@@ -246,6 +282,53 @@ func _on_frame(id: String) -> void:
 	else:
 		Save.buy_frame(id)
 
+func _on_cosmetic(kind: String, id: String) -> void:
+	if state != STATE_SHOP:
+		return
+	if Save.owns_cosmetic(kind, id):
+		Save.equip_cosmetic(kind, id)
+	else:
+		Save.buy_cosmetic(kind, id)
+
+## Hand the equipped paint and hat to the renderer.
+func _apply_style() -> void:
+	world.paint_color = Cosmetics.def("paint", Save.paint)["color"]
+	world.hat_id = Save.hat
+
+# ---- ad stubs (rewarded: double scrap after a flight, a free boost before a launch; interstitial between flights) ----
+
+func _on_ad_double() -> void:
+	if state != STATE_SHOP or hud.ad_active or last_result.is_empty() or last_result.get("doubled", true) or not Tuning.ads_enabled:
+		return
+	hud.show_ad("AD PLAYING", "double scrap (+%s)" % Tuning.fmt(last_result["earned"]), Tuning.ad_seconds, _grant_double)
+
+func _grant_double() -> void:
+	if last_result.is_empty() or last_result.get("doubled", true):
+		return
+	last_result["doubled"] = true
+	Save.flights_since_ad = 0
+	Save.add_scrap(float(last_result["earned"]))   # (saves and refreshes the shop)
+
+func _on_ad_boost() -> void:
+	if state != STATE_SHOP or hud.ad_active or bonus_charge > 0 or not Tuning.ads_enabled:
+		return
+	hud.show_ad("AD PLAYING", "a free boost charge for your next launch", Tuning.ad_seconds, _grant_boost)
+
+func _grant_boost() -> void:
+	bonus_charge = 1
+	Save.flights_since_ad = 0
+	hud.refresh_shop(last_result, true)
+
+## Between flights only, never in the first few, at most every Tuning.interstitial_every flights.
+func _maybe_interstitial() -> void:
+	if not Tuning.ads_enabled or hud.ad_active or Save.runs < Tuning.interstitial_first_flight or Save.flights_since_ad < Tuning.interstitial_every:
+		return
+	hud.show_ad("AD BREAK", "", Tuning.ad_seconds * 0.7, _interstitial_done)
+
+func _interstitial_done() -> void:
+	Save.flights_since_ad = 0
+	Save.save_game()
+
 func _on_launcher(id: String) -> void:
 	if state != STATE_SHOP:
 		return
@@ -256,16 +339,17 @@ func _on_launcher(id: String) -> void:
 
 func _on_save_changed() -> void:
 	Tuning.current_launcher = Save.launcher
+	_apply_style()
 	if state == STATE_SHOP and not _warming:
 		flight.reset(Save.loadout())
 		flight.best_x = Save.best_distance
-		hud.refresh_shop(last_result)
+		hud.refresh_shop(last_result, bonus_charge > 0)
 
 func _on_tuning_changed(_property: String) -> void:
 	flight.refresh_derived()
 	if state == STATE_SHOP:
 		flight.reset(Save.loadout())
-		hud.refresh_shop(last_result)
+		hud.refresh_shop(last_result, bonus_charge > 0)
 
 # ---------------------------------------------------------------------------------------------
 # Input
@@ -385,12 +469,18 @@ func frame(delta: float, raw_delta: float = 0.0) -> void:
 		world.update_particles(delta)
 		if flight.boost_left > 0.0:
 			_boost_flames()
+		if flight.phase == Flight.PH_AIR and Save.trail != "none":
+			_trail_t -= delta
+			if _trail_t <= 0.0:
+				_trail_t = Tuning.trail_rate
+				_spawn_trail()
 		if flight.phase == Flight.PH_DONE and _finish_timer < 0.0:
 			_finish_run()
 		if _finish_timer >= 0.0:
 			_finish_timer += delta
 			if _finish_timer >= FINISH_DELAY:
 				_to_shop()
+				_maybe_interstitial()
 	if state == STATE_FLIGHT and flight.phase == Flight.PH_AIM:
 		hud.set_zone(0, 0, Save.zone_best, 0.0)
 		hud.set_flight(0.0, 0, 0.0, flight.altitude(), false, flight.charges, flight.charges_max, false)
@@ -522,3 +612,19 @@ func _boost_flames() -> void:
 		world.spawn(WorldView.P_FLAME, flight.x - (2.6 + k * 0.5) * c - jitter * s, flight.y - (2.6 + k * 0.5) * s + jitter * c,
 				-flight.vx * 0.12 - 4.0 * c, -flight.vy * 0.12 - 4.0 * s, 0.55, 1.0 - k * 0.2,
 				Color(1.0, 0.45 + rng.randf() * 0.45, 0.08))
+
+## One trail particle behind the glider, by the equipped trail.
+func _spawn_trail() -> void:
+	var c := cos(flight.theta)
+	var s := sin(flight.theta)
+	var px := flight.x - 2.8 * c
+	var py := flight.y - 2.8 * s
+	match Save.trail:
+		"sparkle":
+			world.spawn(WorldView.P_SPARK, px + (rng.randf() - 0.5) * 0.8, py + (rng.randf() - 0.5) * 0.8, -1.0, rng.randf() * 2.0, 0.5, 0.3, Color(1.0, 0.9, 0.35))
+		"smoke":
+			world.spawn(WorldView.P_DUST, px, py, -0.5, 0.8, 0.9, 0.9, Color(0.75, 0.75, 0.78))
+		"bubbles":
+			world.spawn(WorldView.P_BUBBLE, px + (rng.randf() - 0.5) * 0.6, py, -0.6, 0.5, 1.1, 0.6 + rng.randf() * 0.5, Color(0.7, 0.9, 1.0))
+		"rainbow":
+			world.spawn(WorldView.P_SPARK, px, py, 0.0, 0.0, 0.7, 0.55, Color.from_hsv(fmod(_time * 0.8, 1.0), 0.85, 1.0))

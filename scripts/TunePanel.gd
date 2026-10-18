@@ -71,7 +71,9 @@ const ENTRIES := [
 ]
 
 ## [Tuning property, label]: on/off switches.
-const TOGGLES := []
+const TOGGLES := [
+	["ads_enabled", "Ads (fake stubs)"],
+]
 
 ## Screen rect of the TUNE button, so the game can ignore touches that land on it.
 static var _button_rect := Rect2()
@@ -220,6 +222,17 @@ func build() -> void:
 	unlock_gear.pressed.connect(unlock_all_gear)
 	unlock_gear.set_meta("debug", "unlock_gear")
 	unlock_row.add_child(unlock_gear)
+	var unlock_style := _make_button("Unlock cosmetics", 30)
+	unlock_style.pressed.connect(unlock_all_cosmetics)
+	unlock_style.set_meta("debug", "unlock_cosmetics")
+	var new_daily := _make_button("New daily", 30)
+	new_daily.pressed.connect(reset_daily)
+	new_daily.set_meta("debug", "new_daily")
+	var row2 := HBoxContainer.new()
+	row2.add_theme_constant_override("separation", 20)
+	row2.add_child(unlock_style)
+	row2.add_child(new_daily)
+	column.add_child(row2)
 	column.add_child(unlock_row)
 	_out = _make_label("", 26, HORIZONTAL_ALIGNMENT_LEFT)
 	_out.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -290,6 +303,22 @@ func unlock_all_gear() -> void:
 		Save.launchers_owned[l["id"]] = true
 	Save.save_game()
 	_out.text = "All frames and launchers unlocked."
+
+## Debug: own every paint, hat and trail.
+func unlock_all_cosmetics() -> void:
+	for kind in Cosmetics.KINDS:
+		for d in Cosmetics.list_of(kind):
+			Save.cosmetics_owned[kind + ":" + d["id"]] = true
+	Save.save_game()
+	_out.text = "All cosmetics unlocked."
+
+## Debug: start a fresh daily launch (new target, nothing claimed) without waiting for midnight.
+func reset_daily() -> void:
+	Save.daily_key = 0
+	Save.daily_target = 0
+	Save.refresh_daily()
+	Save.save_game()
+	_out.text = "New daily: target %s m." % Tuning.fmt(Save.daily_target)
 
 ## Debug: pay out every active mission and draw three new ones.
 func complete_all_missions() -> void:

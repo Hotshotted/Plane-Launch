@@ -17,6 +17,7 @@ const P_FEATHER := 2
 const P_FLAME := 3
 const P_DUST := 4
 const P_SCRAP := 5   # chunks flying off a hard landing
+const P_BUBBLE := 6  # trail bubbles
 
 # ---- palette ----
 const SKY_TOP := Color(0.36, 0.64, 0.88)
@@ -55,6 +56,7 @@ static var HORSESHOE := PackedVector2Array([Vector2(-0.5, -0.5), Vector2(-0.2, -
 static var ARROW_UP := PackedVector2Array([Vector2(0, -0.5), Vector2(0.5, 0.0), Vector2(0.2, 0.0), Vector2(0.2, 0.5), Vector2(-0.2, 0.5), Vector2(-0.2, 0.0), Vector2(-0.5, 0.0)])
 static var STAR := PackedVector2Array([Vector2(0, -0.5), Vector2(0.09, -0.09), Vector2(0.5, 0), Vector2(0.09, 0.09), Vector2(0, 0.5), Vector2(-0.09, 0.09), Vector2(-0.5, 0), Vector2(-0.09, -0.09)])
 static var ANVIL := PackedVector2Array([Vector2(-2.0, -0.5), Vector2(1.6, -0.62), Vector2(2.3, -0.1), Vector2(2.0, 0.72), Vector2(-1.9, 0.72), Vector2(-2.2, 0.0)])
+static var CROWN := PackedVector2Array([Vector2(-0.5, 0.3), Vector2(-0.5, -0.3), Vector2(-0.25, 0.0), Vector2(0.0, -0.4), Vector2(0.25, 0.0), Vector2(0.5, -0.3), Vector2(0.5, 0.3)])
 static var FLAME := PackedVector2Array([Vector2(0, -0.28), Vector2(-1.0, 0.0), Vector2(0, 0.28)])
 
 # set by Main every frame
@@ -64,9 +66,12 @@ var cam_bottom := 0.0
 var ppm := 28.0          # pixels per meter (the camera zoom; the shop zooms out for tall ramps)
 var best_text := ""
 var best_x := 0.0
+var target_x := 0.0     # the daily target flag (0 = none)
 var show_aura := false
 var boost_fx := 0.0     # 0..1 while a boost burns: speed lines
 var _chord_mult := 1.0  # wing length factor of the frame being drawn
+var paint_color := Color(0, 0, 0, 0)   # equipped paint (alpha 0 = the frame's own colours)
+var hat_id := "none"
 var showcase := false   # pre-warm: draw one of everything
 
 var _font: Font
@@ -157,6 +162,8 @@ func update_particles(dt: float) -> void:
 		match _pkind[i]:
 			P_FEATHER, P_SCRAP:
 				_pvy[i] -= 9.0 * dt
+			P_BUBBLE:
+				_pvy[i] += 2.5 * dt
 			P_RUBBER, P_DUST:
 				_pvx[i] *= 1.0 - 2.0 * dt
 				_pvy[i] *= 1.0 - 2.0 * dt
@@ -231,6 +238,7 @@ func _draw() -> void:
 	_draw_ground()
 	_draw_props()
 	_draw_signs()
+	_draw_target_flag()
 	_draw_ramp()
 	_draw_things()
 	_draw_glider()
@@ -600,6 +608,21 @@ func _draw_signs() -> void:
 			draw_string_outline(_font, Vector2(bx - 3.0 * _ppm, top - 0.6 * _ppm), best_text, HORIZONTAL_ALIGNMENT_CENTER, 6.0 * _ppm, 38, 8, BLACK)
 			draw_string(_font, Vector2(bx - 3.0 * _ppm, top - 0.6 * _ppm), best_text, HORIZONTAL_ALIGNMENT_CENTER, 6.0 * _ppm, 38, Color(1, 0.95, 0.5))
 
+## The daily target: a teal flag on a pole.
+func _draw_target_flag() -> void:
+	if target_x <= 0.0:
+		return
+	var bx := _sx(target_x)
+	if bx < -300.0 or bx > _size.x + 300.0:
+		return
+	var top := _ground_sy - 8.0 * _ppm
+	draw_line(Vector2(bx, _ground_sy), Vector2(bx, top), BLACK, 9.0)
+	draw_line(Vector2(bx, _ground_sy), Vector2(bx, top), Color(0.9, 0.9, 0.9), 5.0)
+	var sway := sin(_time * 5.0 + 1.0) * 0.25
+	_poly(TRI, Vector2(bx + 1.5 * _ppm, top + 0.9 * _ppm), -PI * 0.5 + sway * 0.2, Vector2(1.7, 3.0) * _ppm * 0.6, Color(0.1, 0.8, 0.8) if flight.passed_target else Color(0.2, 0.55, 0.95))
+	draw_string_outline(_font, Vector2(bx - 3.0 * _ppm, top - 0.6 * _ppm), "DAILY TARGET", HORIZONTAL_ALIGNMENT_CENTER, 6.0 * _ppm, 34, 8, BLACK)
+	draw_string(_font, Vector2(bx - 3.0 * _ppm, top - 0.6 * _ppm), "DAILY TARGET", HORIZONTAL_ALIGNMENT_CENTER, 6.0 * _ppm, 34, Color(0.7, 0.95, 1.0))
+
 func _draw_ramp() -> void:
 	if flight.ramp_pts.size() != Tuning.RAMP_N + 1:
 		return
@@ -921,6 +944,9 @@ func _draw_particles() -> void:
 		match _pkind[i]:
 			P_FLAME:
 				draw_circle(o, sz * 0.5, col)
+			P_BUBBLE:
+				draw_circle(o, sz * 0.5, Color(col.r, col.g, col.b, col.a * 0.3))
+				draw_arc(o, sz * 0.5, 0.0, TAU, 12, Color(0.2, 0.4, 0.6, col.a), 2.0)
 			P_FEATHER:
 				if sz > 4.0:
 					_poly(DIAMOND, o, _time * 8.0 + i, Vector2(sz * 1.6, sz * 0.7), col, 2.0)
@@ -966,6 +992,8 @@ func _draw_glider() -> void:
 		"pogo":
 			body_col = Color(0.28, 0.74, 0.36).lightened(0.05 * tier)
 			wing_col = Color(1.0, 0.85, 0.25).lerp(wing_col, 0.2)
+	if paint_color.a > 0.0:
+		body_col = paint_color.lightened(0.04 * tier)
 	# --- booster pods (behind everything) ---
 	var pods := mini(3, (f.lv_booster + 2) / 3) if f.lv_booster > 0 else 0
 	for k in pods:
@@ -1000,6 +1028,7 @@ func _draw_glider() -> void:
 	var head := o + Vector2(0.2 * c + 0.75 * s, 0.2 * s - 0.75 * c) * u
 	_poly(OCT, head, rot, Vector2(0.34, 0.34) * u, Color(0.93, 0.76, 0.6), 2.5)
 	_poly(RECT, head + Vector2(0.18 * c, 0.18 * s) * u, rot, Vector2(0.28, 0.16) * u, Color(0.15, 0.15, 0.2), 1.5)
+	_draw_hat(o, rot, c, s, u)
 	if tier >= 3:
 		_poly(DIAMOND, o + Vector2(0.4 * c + 0.55 * s, 0.4 * s - 0.55 * c) * u, rot, Vector2(1.7, 1.25) * u, Color(0.6, 0.85, 0.95, 0.75), 2.5)
 	# --- front wing: bigger and better with every Wings level ---
@@ -1028,6 +1057,24 @@ func _draw_glider() -> void:
 
 func _rot_pt(p: Vector2, c: float, s: float, u: float, o: Vector2) -> Vector2:
 	return Vector2(p.x * c - p.y * s, p.x * s + p.y * c) * u + o
+
+## Whiskers' hat, on top of the pilot's head.
+func _draw_hat(o: Vector2, rot: float, c: float, s: float, u: float) -> void:
+	if hat_id == "none":
+		return
+	match hat_id:
+		"cap":
+			_poly(RECT, _rot_pt(Vector2(0.2, -1.1), c, s, u, o), rot, Vector2(0.62, 0.3) * u, Color(0.85, 0.15, 0.15), 2.5)
+			_poly(RECT, _rot_pt(Vector2(0.55, -0.98), c, s, u, o), rot, Vector2(0.5, 0.1) * u, Color(0.65, 0.1, 0.1), 2.0)
+		"tophat":
+			_poly(RECT, _rot_pt(Vector2(0.2, -1.38), c, s, u, o), rot, Vector2(0.5, 0.68) * u, Color(0.12, 0.12, 0.15), 2.5)
+			_poly(RECT, _rot_pt(Vector2(0.2, -1.04), c, s, u, o), rot, Vector2(0.95, 0.1) * u, Color(0.12, 0.12, 0.15), 2.5)
+			_poly(RECT, _rot_pt(Vector2(0.2, -1.2), c, s, u, o), rot, Vector2(0.52, 0.1) * u, Color(0.8, 0.2, 0.25), 1.5)
+		"party":
+			_poly(TRI, _rot_pt(Vector2(0.2, -1.38), c, s, u, o), rot, Vector2(0.55, 0.8) * u, Color(0.35, 0.6, 0.95), 2.5)
+			_poly(OCT, _rot_pt(Vector2(0.2, -1.8), c, s, u, o), rot, Vector2(0.1, 0.1) * u, Color(1.0, 0.85, 0.2), 2.0)
+		"crown":
+			_poly(CROWN, _rot_pt(Vector2(0.2, -1.12), c, s, u, o), rot, Vector2(0.75, 0.75) * u, Color(1.0, 0.82, 0.15), 2.5)
 
 ## A wing seen from the side-front: a slab above the fuselage with a slanted far edge.
 ## `chord` is its length in meters; the far edge slants up-back, longer with more lift.

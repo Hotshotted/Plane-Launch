@@ -26,6 +26,7 @@ const EV_LAND := 5
 const EV_LAUNCH := 6
 const EV_BEST := 7
 const EV_FAN := 8     # just flew into an updraft
+const EV_TARGET := 11 # passed the daily target distance
 const EV_ZONE := 9    # entered a new zone for the first time this run (val = zone index)
 const EV_SKIP := 10   # bounced off the ground (val = 1 water, 2 cloud)
 
@@ -118,6 +119,8 @@ var picked_value := 0          # scrap value picked up
 var picked_count := 0
 var best_x := 0.0              # the best-distance marker in the world (0 = none yet)
 var passed_best := false
+var target_x := 0.0            # the daily target marker in the world (0 = none)
+var passed_target := false
 var gen_x := 0.0
 var rng := RandomNumberGenerator.new()
 var bird_hits := 0
@@ -194,6 +197,7 @@ func reset(levels: Dictionary, seed_value: int = -1) -> void:
 	picked_value = 0
 	picked_count = 0
 	passed_best = false
+	passed_target = false
 	bird_hits = 0
 	pad_bounces = 0
 	boosts_used = 0
@@ -458,6 +462,9 @@ func _step_air(dt: float, hold: bool) -> void:
 	if not passed_best and best_x > 0.0 and x >= best_x:
 		passed_best = true
 		push_event(EV_BEST, x, y)
+	if not passed_target and target_x > 0.0 and x >= target_x:
+		passed_target = true
+		push_event(EV_TARGET, x, y)
 	# --- keep the world filled ahead, and drop what is behind ---
 	while gen_x < x + 70.0:
 		_gen_chunk()

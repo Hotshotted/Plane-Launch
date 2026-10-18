@@ -115,6 +115,8 @@ func _initialize() -> void:
 	FlightS = load("res://scripts/Flight.gd")
 	sv.path = "user://smoke_test_save.json"   # never touch a real save
 	sv.reset_all()
+	tn.ads_enabled = false       # (the fake ad screens are tested on their own, in 2i)
+	tn.ad_seconds = 0.05
 	DebugFlags.parse(["tune"])   # the whole run has the tuning panel, so it is part of the "nothing new" baseline
 
 	print("1. boot and the visible pre-warm")
@@ -692,6 +694,203 @@ func _initialize() -> void:
 	tp2.unlock_all_gear()
 	check(sv.owns_frame("pogo") and sv.owns_launcher("sled"), "?tune: Unlock frames + launchers")
 	check(main.prewarm_frames_seen.size() == 4 and main.prewarm_launchers_seen.size() == 4, "the pre-warm drew every frame and launcher")
+	sv.reset_all()
+	main._to_shop()
+
+	print("2g. cosmetics")
+	for kind in Cosmetics.KINDS:
+		var list := Cosmetics.list_of(kind)
+		var asc := true
+		for i in range(1, list.size()):
+			if list[i]["cost"] <= list[i - 1]["cost"]:
+				asc = false
+		check(list.size() == 5 and list[0]["cost"] == 0.0 and asc, "%s: a free default and four to buy, getting pricier" % kind)
+	check(Cosmetics.hats.size() == 5 and Cosmetics.hats[1]["name"] == "Baseball Cap", "hats for Whiskers")
+	sv.reset_all()
+	check(sv.owns_cosmetic("paint", "default") and sv.owns_cosmetic("hat", "none") and sv.owns_cosmetic("trail", "none") and not sv.owns_cosmetic("hat", "crown"), "the defaults are owned from the start")
+	check(not sv.buy_cosmetic("hat", "cap") and sv.scrap == 0.0, "can't buy a hat without the scrap")
+	sv.add_scrap(1000.0)
+	check(sv.buy_cosmetic("hat", "cap") and sv.hat == "cap" and sv.scrap == 1000.0 - 80.0, "buying a hat pays and wears it")
+	check(not sv.buy_cosmetic("hat", "cap") and sv.equip_cosmetic("hat", "none") and sv.hat == "none" and not sv.equip_cosmetic("hat", "crown"), "owned hats can be swapped, unowned can't be worn")
+	check(sv.buy_cosmetic("paint", "red") and sv.buy_cosmetic("trail", "sparkle") and sv.paint == "red" and sv.trail == "sparkle", "paints and trails work the same way")
+	sv.load_game()
+	check(sv.paint == "red" and sv.trail == "sparkle" and sv.owns_cosmetic("hat", "cap"), "cosmetics survive a save round trip")
+	var fc := FileAccess.open(sv.path, FileAccess.WRITE)
+	fc.store_string(JSON.stringify({"version": 5, "scrap": 3, "paint": "gold", "hat": "crown", "trail": "bogus"}))
+	fc.close()
+	sv.load_game()
+	check(sv.paint == "default" and sv.hat == "none" and sv.trail == "none", "a save wearing things it doesn't own falls back to the defaults")
+	sv.reset_all()
+	sv.add_scrap(5000.0)
+	main._to_shop()
+	var style_nodes := snapshot(main)
+	main.hud.show_tab(3)
+	main.hud.set_style_cat(1)
+	check(main.hud._tab_pages[3].visible and main.hud._style_rows[0]["name"].text.begins_with("No Hat") and main.hud._style_rows[1]["btn"].text == tn.fmt(80.0), "the STYLE tab lists the hats with prices")
+	main.hud._style_rows[3]["btn"].pressed.emit()
+	check(sv.hat == "party" and main.world.hat_id == "party" and main.hud._style_rows[3]["btn"].text == "EQUIPPED", "buying a hat puts it on the pilot in the world")
+	main.hud.set_style_cat(0)
+	main.hud._style_rows[1]["btn"].pressed.emit()
+	check(sv.paint == "red" and main.world.paint_color.r > 0.8 and main.world.paint_color.a > 0.0, "a paint job recolours the glider")
+	main.hud._style_rows[0]["btn"].pressed.emit()
+	check(sv.paint == "default" and main.world.paint_color.a == 0.0, "the free default paint comes back")
+	main.hud.set_style_cat(2)
+	main.hud._style_rows[1]["btn"].pressed.emit()
+	check(sv.trail == "sparkle", "a trail is bought and worn")
+	main.hud.show_tab(0)
+	check(same_world(style_nodes, snapshot(main)), "the STYLE tab creates nothing")
+	for tid in ["sparkle", "smoke", "bubbles", "rainbow", "none"]:
+		sv.trail = tid
+		main._to_shop()
+		main.hud._launch_btn.pressed.emit()
+		main.flight.gen_x = 1.0e9
+		main.flight.clear_things()
+		for i in 130:
+			main.frame(1.0 / 60.0, 1.0 / 60.0)
+		var live: int = main.world.live_particles()
+		check((tid == "none" and live == 0) or (tid != "none" and live >= 5), "trail %s: %d particles behind the glider" % [tid, live])
+		fly_main(main)
+	sv.reset_all()
+	main._to_shop()
+
+	print("2h. daily launch")
+	sv.reset_all()
+	sv.day_key_override = 20261018
+	var seed_a: int = sv.daily_seed()
+	sv.day_key_override = 20261019
+	var seed_b: int = sv.daily_seed()
+	sv.day_key_override = 20261018
+	check(seed_a == sv.daily_seed() and seed_a != seed_b and seed_a >= 0, "a day has one seed, a new day another")
+	check(sv.refresh_daily() and sv.daily_key == 20261018 and sv.daily_target >= 90 and sv.daily_target % 5 == 0, "a new day gets a target (%d m)" % sv.daily_target)
+	var target0: int = sv.daily_target
+	sv.best_distance = 900.0
+	check(not sv.refresh_daily() and sv.daily_target == target0, "the target stays put for the rest of the day")
+	sv.daily_best = 77.0
+	sv.daily_claimed = true
+	sv.day_key_override = 20261019
+	check(sv.refresh_daily() and sv.daily_best == 0.0 and not sv.daily_claimed and sv.daily_target > target0, "the next day starts fresh, stretching from your best (%d m)" % sv.daily_target)
+	sv.day_key_override = 20261018
+	sv.daily_key = 0
+	sv.daily_target = 0
+	sv.refresh_daily()
+	sv.daily_best = 123.0
+	sv.save_game()
+	sv.load_game()
+	check(sv.daily_key == 20261018 and sv.daily_best == 123.0 and sv.daily_target > 0, "the daily state survives a save round trip")
+	var wa = FlightS.new()
+	var wb = FlightS.new()
+	var wc = FlightS.new()
+	wa.reset({}, sv.daily_seed())
+	wb.reset({}, sv.daily_seed())
+	wc.reset({}, seed_b)
+	wa.clear_things()
+	wb.clear_things()
+	wc.clear_things()
+	for k in 6:
+		wa._gen_chunk()
+		wb._gen_chunk()
+		wc._gen_chunk()
+	var same_world_a := true
+	var diff_c := false
+	for i in FlightS.MAX_THINGS:
+		if wa.t_active[i] != wb.t_active[i] or wa.t_x[i] != wb.t_x[i] or wa.t_y[i] != wb.t_y[i] or wa.t_kind[i] != wb.t_kind[i]:
+			same_world_a = false
+		if wa.t_x[i] != wc.t_x[i] or wa.t_kind[i] != wc.t_kind[i]:
+			diff_c = true
+	check(same_world_a and diff_c, "the daily world is the same every time today and differs tomorrow")
+	f = air(0, 40, 25, 0, 0)
+	f.target_x = 30.0
+	var got_target := false
+	for i in 240:
+		f.step(1.0 / 120.0, false)
+		for k in f.ev_n:
+			if f.ev_kind[k] == FlightS.EV_TARGET:
+				got_target = true
+		f.ev_n = 0
+	check(got_target and f.passed_target, "passing the target raises one event")
+	sv.reset_all()
+	sv.day_key_override = 20261018
+	main._to_shop()
+	main.hud.show_tab(4)
+	check(main.hud._tab_pages[4].visible and main.hud._daily_info.text.contains("Target %s m" % tn.fmt(sv.daily_target)) and main.hud._daily_title.text.contains("2026-10-18"), "the DAILY tab shows the date and target (%s)" % main.hud._daily_info.text.replace("\n", " | "))
+	sv.daily_target = 5
+	sv.daily_best = 0.0
+	main.hud.refresh_shop(main.last_result)
+	var reward5: int = sv.daily_reward()
+	var sc_before: float = sv.scrap
+	main.hud._daily_btn.pressed.emit()
+	check(main.state == main.STATE_FLIGHT and main.daily_mode and main.flight.target_x == 5.0 and main.world.target_x == 5.0 and main.hud._daily_label.visible and main.hud._daily_label.text.contains("DAILY TARGET"), "the daily button starts today's flight with a target flag")
+	var seed_check: int = main.flight.rng.seed
+	check(seed_check == sv.daily_seed(), "...in today's seeded world")
+	fly_main(main)
+	check(main.last_result["daily"]["bonus"] == reward5 and sv.daily_claimed and main.hud._result.text.contains("DAILY:") and main.hud._result.text.contains("BONUS"), "reaching the target pays the daily bonus (+%d) and says so" % reward5)
+	check(RustyS.DAILY.has(main.last_result["rusty"]), "Rusty comments on the daily")
+	main.hud._daily_btn.pressed.emit()
+	fly_main(main)
+	check(main.last_result["daily"]["bonus"] == 0 and sv.daily_plays == 2, "the bonus is only paid once a day")
+	main.hud._launch_btn.pressed.emit()
+	check(not main.daily_mode and main.flight.target_x == 0.0 and not main.hud._daily_label.visible, "a normal LAUNCH has no target flag")
+	fly_main(main)
+	main.tune_panel.reset_daily()
+	check(not sv.daily_claimed and sv.daily_target > 5 and sv.daily_plays == 0, "?tune: New daily starts a fresh one")
+	main.tune_panel.unlock_all_cosmetics()
+	check(sv.owns_cosmetic("hat", "crown") and sv.owns_cosmetic("trail", "rainbow") and sv.owns_cosmetic("paint", "gold"), "?tune: Unlock cosmetics")
+	main.hud.show_tab(0)
+	sv.day_key_override = 0
+	sv.reset_all()
+	main._to_shop()
+
+	print("2i. ad stubs")
+	tn.ads_enabled = true
+	sv.reset_all()
+	main.bonus_charge = 0
+	main.last_result = {}
+	main._to_shop()
+	check(main.hud._ad_double_btn.visible and main.hud._ad_boost_btn.visible and main.hud._ad_double_btn.disabled, "ad buttons are on the launch screen; 'double' waits for a flight")
+	main.hud._ad_boost_btn.pressed.emit()
+	check(main.hud.ad_active and main.hud._ad_screen.visible and main.hud._ad_title.text == "AD PLAYING" and main.hud._ad_sub.text.contains("free boost"), "a rewarded ad shows the fake 'Ad playing' screen")
+	main.hud._launch_btn.pressed.emit()
+	check(main.state == main.STATE_SHOP, "nothing can be launched while an ad plays")
+	await real_wait(0.3)
+	check(not main.hud.ad_active and not main.hud._ad_screen.visible and main.bonus_charge == 1 and main.hud._ad_boost_btn.text.contains("READY") and main.hud._ad_boost_btn.disabled, "the ad ends and grants the free boost charge")
+	main.hud._launch_btn.pressed.emit()
+	main.frame(1.0 / 60.0, 1.0 / 60.0)
+	check(main.flight.charges == 1 and main.flight.charges_max == 1 and main.bonus_charge == 0 and main.hud._boost_pips.text == "●", "the free charge is in the next flight (a BOOST button even without a Booster)")
+	touch(main, Vector2(500, 900), false)
+	fly_main(main)
+	check(main.bonus_charge == 0 and main.hud._ad_boost_btn.text.contains("AD:"), "it is used up after one launch")
+	check(not main.hud._ad_double_btn.disabled and main.last_result["earned"] > 0, "after a flight the double-scrap ad is on offer")
+	var sc1: float = sv.scrap
+	var earned1: int = main.last_result["earned"]
+	main.hud._ad_double_btn.pressed.emit()
+	check(main.hud.ad_active and main.hud._ad_sub.text.contains("double scrap"), "the double-scrap ad plays")
+	await real_wait(0.3)
+	check(sv.scrap == sc1 + earned1 and main.hud._ad_double_btn.disabled and main.hud._ad_double_btn.text.contains("DOUBLED"), "the flight's scrap is doubled (+%d)" % earned1)
+	main.hud._ad_double_btn.pressed.emit()
+	check(not main.hud.ad_active and sv.scrap == sc1 + earned1, "...once only")
+	sv.reset_all()
+	sv.flights_since_ad = 0
+	tn.interstitial_every = 3
+	tn.interstitial_first_flight = 3
+	main.last_result = {}
+	main._to_shop()
+	var shown: Array[bool] = []
+	for r in 5:
+		main.hud._launch_btn.pressed.emit()
+		fly_main(main)
+		shown.append(main.hud.ad_active)
+		if main.hud.ad_active:
+			check(main.state == main.STATE_SHOP and main.hud._ad_sub.text.contains("stub"), "the interstitial only shows between flights")
+		await real_wait(0.2)
+	check(shown == [false, false, true, false, false], "an interstitial every few flights, never in the first ones (%s)" % str(shown))
+	tn.ads_enabled = false
+	sv.flights_since_ad = 50
+	main._to_shop()
+	main.hud._launch_btn.pressed.emit()
+	fly_main(main)
+	check(not main.hud.ad_active and not main.hud._ad_double_btn.visible and not main.hud._ad_boost_btn.visible, "with ads off there is no ad and no ad button")
+	tn.interstitial_every = 4
+	tn.interstitial_first_flight = 4
 	sv.reset_all()
 	main._to_shop()
 

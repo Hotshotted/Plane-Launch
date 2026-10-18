@@ -9,9 +9,13 @@ signal launch_pressed
 signal buy_pressed(id: String)
 signal frame_pressed(id: String)       # buy or equip a frame
 signal launcher_pressed(id: String)    # buy or equip a launcher
+signal cosmetic_pressed(kind: String, id: String)   # buy or equip a paint, hat or trail
+signal daily_pressed
+signal ad_double_pressed
+signal ad_boost_pressed
 
 const POPUPS := 6
-const PANEL_H := 1240          # height of the between-runs panel (px)
+const PANEL_H := 1300          # height of the between-runs panel (px)
 const MODE_SHOP := 0
 const MODE_FLIGHT := 1
 
@@ -65,6 +69,21 @@ var _tab := 0
 var _frame_rows: Array[Dictionary] = []
 var _launcher_rows: Array[Dictionary] = []
 var _aim_key := -1
+var _daily_title: Label
+var _daily_info: Label
+var _daily_btn: Button
+var _daily_label: Label              # in flight: the target
+var _ad_double_btn: Button
+var _ad_boost_btn: Button
+var _ad_screen: Control
+var _ad_title: Label
+var _ad_sub: Label
+var _ad_left := 0.0
+var _ad_callback := Callable()
+var ad_active := false
+var _style_cat := 0                 # 0 paint, 1 hats, 2 trails
+var _style_cat_buttons: Array[Button] = []
+var _style_rows: Array[Dictionary] = []
 var _launch_btn: Button
 var _btn_afford: StyleBoxFlat
 var _btn_poor: StyleBoxFlat
@@ -87,6 +106,8 @@ func _ready() -> void:
 	_build_flight_hud()
 	_build_shop()
 	_build_splash()
+	_build_ad_screen()
+	move_child(_ad_screen, _splash.get_index())   # the splash stays on top of it during the pre-warm
 	_build_stamp()
 	set_mode(MODE_SHOP)
 
@@ -138,6 +159,12 @@ func _build_flight_hud() -> void:
 	_zone_label.modulate = Color(0.8, 0.95, 1.0)
 	_flight_root.add_child(_zone_label)
 	_flight_bar = _make_bar(_flight_root, 268.0)
+	_daily_label = _label(34)
+	_daily_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	_daily_label.offset_top = 300
+	_daily_label.modulate = Color(0.6, 0.95, 1.0)
+	_daily_label.visible = false
+	_flight_root.add_child(_daily_label)
 	_banner = _label(80)
 	_banner.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	_banner.offset_left = -520
@@ -237,11 +264,11 @@ func _build_shop() -> void:
 	_shop_bar = _make_bar_inline(col)
 	var talk := HBoxContainer.new()
 	talk.add_theme_constant_override("separation", 14)
-	talk.custom_minimum_size = Vector2(0, 150)
+	talk.custom_minimum_size = Vector2(0, 130)
 	talk.clip_contents = true
 	col.add_child(talk)
 	_rusty = Rusty.new()
-	_rusty.custom_minimum_size = Vector2(130, 130)
+	_rusty.custom_minimum_size = Vector2(120, 120)
 	_rusty.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	talk.add_child(_rusty)
 	var say := VBoxContainer.new()
@@ -264,15 +291,15 @@ func _build_shop() -> void:
 	tabs.add_theme_constant_override("separation", 8)
 	col.add_child(tabs)
 	var holder := Control.new()   # the pages share one fixed-height area
-	holder.custom_minimum_size = Vector2(0, 5 * 78 + 4 * 8)
+	holder.custom_minimum_size = Vector2(0, 5 * 78 + 4 * 8 + 62)
 	holder.clip_contents = true
 	col.add_child(holder)
-	for ti in 3:
+	for ti in 5:
 		var tb := Button.new()
-		tb.text = ["UPGRADES", "FRAMES", "LAUNCHERS"][ti]
+		tb.text = ["UPGRADES", "FRAMES", "LAUNCH", "STYLE", "DAILY"][ti]
 		tb.custom_minimum_size = Vector2(0, 64)
 		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		tb.add_theme_font_size_override("font_size", 30)
+		tb.add_theme_font_size_override("font_size", 26)
 		tb.focus_mode = Control.FOCUS_NONE
 		tb.pressed.connect(show_tab.bind(ti))
 		tabs.add_child(tb)
@@ -298,7 +325,44 @@ func _build_shop() -> void:
 		var r3 := _make_row(_tab_pages[2])
 		r3["btn"].pressed.connect(func(): launcher_pressed.emit(l["id"]))
 		_launcher_rows.append(r3)
+	# STYLE: a category switch and five rows that show paints, hats or trails
+	var cats := HBoxContainer.new()
+	cats.add_theme_constant_override("separation", 8)
+	_tab_pages[3].add_child(cats)
+	for ci in 3:
+		var cb := Button.new()
+		cb.text = Cosmetics.KIND_NAMES[Cosmetics.KINDS[ci]]
+		cb.custom_minimum_size = Vector2(0, 54)
+		cb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cb.add_theme_font_size_override("font_size", 26)
+		cb.focus_mode = Control.FOCUS_NONE
+		cb.pressed.connect(set_style_cat.bind(ci))
+		cats.add_child(cb)
+		_style_cat_buttons.append(cb)
+	for k in 5:
+		var sr := _make_row(_tab_pages[3])
+		sr["btn"].pressed.connect(_on_style_row.bind(k))
+		_style_rows.append(sr)
+	# DAILY: today's target and a button that starts today's seeded world
+	var dp: VBoxContainer = _tab_pages[4]
+	_daily_title = _label(40, HORIZONTAL_ALIGNMENT_CENTER, 0)
+	_daily_title.modulate = Color(0.6, 0.95, 1.0)
+	dp.add_child(_daily_title)
+	_daily_info = _label(32, HORIZONTAL_ALIGNMENT_CENTER, 0)
+	_daily_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_daily_info.custom_minimum_size = Vector2(0, 230)
+	_daily_info.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	dp.add_child(_daily_info)
+	_daily_btn = Button.new()
+	_daily_btn.text = "START DAILY LAUNCH"
+	_daily_btn.custom_minimum_size = Vector2(0, 100)
+	_daily_btn.add_theme_font_size_override("font_size", 44)
+	_set_button_style(_daily_btn, _style(Color(0.15, 0.5, 0.8), Color.BLACK, 24, 5))
+	_daily_btn.focus_mode = Control.FOCUS_NONE
+	_daily_btn.pressed.connect(func(): daily_pressed.emit())
+	dp.add_child(_daily_btn)
 	show_tab(0)
+	set_style_cat(0)
 	var mtitle := _label(28, HORIZONTAL_ALIGNMENT_LEFT, 0)
 	mtitle.text = "MISSIONS  (from Rusty)"
 	mtitle.modulate = Color(0.8, 0.9, 1.0)
@@ -315,6 +379,15 @@ func _build_shop() -> void:
 		col.add_child(mrow)
 		_mission_rows.append(mt)
 		_mission_rewards.append(mr)
+	var ad_row := HBoxContainer.new()
+	ad_row.add_theme_constant_override("separation", 10)
+	col.add_child(ad_row)
+	_ad_double_btn = _ad_button("AD: DOUBLE LAST SCRAP")
+	_ad_double_btn.pressed.connect(func(): ad_double_pressed.emit())
+	ad_row.add_child(_ad_double_btn)
+	_ad_boost_btn = _ad_button("AD: FREE BOOST CHARGE")
+	_ad_boost_btn.pressed.connect(func(): ad_boost_pressed.emit())
+	ad_row.add_child(_ad_boost_btn)
 	_launch_btn = Button.new()
 	_launch_btn.text = "LAUNCH!"
 	_launch_btn.custom_minimum_size = Vector2(0, 130)
@@ -347,7 +420,7 @@ func _make_row(page: Control) -> Dictionary:
 	v.add_child(nm)
 	v.add_child(ef)
 	var b := Button.new()
-	b.custom_minimum_size = Vector2(250, 70)
+	b.custom_minimum_size = Vector2(250, 60)
 	b.add_theme_font_size_override("font_size", 34)
 	_set_button_style(b, _btn_afford)
 	b.focus_mode = Control.FOCUS_NONE
@@ -359,11 +432,54 @@ func _set_button_style(b: Button, st: StyleBoxFlat) -> void:
 	for sn in ["normal", "hover", "pressed", "disabled", "focus"]:
 		b.add_theme_stylebox_override(sn, st)
 
+func set_style_cat(i: int) -> void:
+	_style_cat = i
+	for k in _style_cat_buttons.size():
+		_style_cat_buttons[k].modulate = Color(1, 1, 1) if k == i else Color(0.6, 0.65, 0.75)
+	_refresh_style()
+
+func _on_style_row(k: int) -> void:
+	var kind: String = Cosmetics.KINDS[_style_cat]
+	cosmetic_pressed.emit(kind, Cosmetics.list_of(kind)[k]["id"])
+
+func _refresh_style() -> void:
+	var kind: String = Cosmetics.KINDS[_style_cat]
+	var list := Cosmetics.list_of(kind)
+	for k in _style_rows.size():
+		var r: Dictionary = _style_rows[k]
+		var d: Dictionary = list[k]
+		var on: bool = Save.equipped(kind) == d["id"]
+		r["name"].text = d["name"] + ("   ✓" if on else "")
+		r["eff"].text = "Whiskers' hat" if kind == "hat" else ("Paint job" if kind == "paint" else "Trail")
+		var b: Button = r["btn"]
+		if on:
+			b.text = "EQUIPPED"
+			b.disabled = true
+			_set_button_style(b, _btn_max)
+		elif Save.owns_cosmetic(kind, d["id"]):
+			b.text = "EQUIP"
+			b.disabled = false
+			_set_button_style(b, _btn_afford)
+		else:
+			b.text = Tuning.fmt(float(d["cost"]))
+			b.disabled = false
+			_set_button_style(b, _btn_afford if Save.scrap >= float(d["cost"]) else _btn_poor)
+
 func show_tab(i: int) -> void:
 	_tab = i
 	for k in _tab_pages.size():
 		_tab_pages[k].visible = k == i
 		_tab_buttons[k].modulate = Color(1, 1, 1) if k == i else Color(0.6, 0.65, 0.75)
+
+func _ad_button(text: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(0, 60)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.add_theme_font_size_override("font_size", 25)
+	b.focus_mode = Control.FOCUS_NONE
+	_set_button_style(b, _style(Color(0.35, 0.25, 0.55), Color.BLACK, 14, 4))
+	return b
 
 func _make_bar_inline(col: VBoxContainer) -> Dictionary:
 	var holder := Control.new()
@@ -387,6 +503,33 @@ func _build_splash() -> void:
 	t.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_splash.add_child(t)
 	add_child(_splash)
+
+func _build_ad_screen() -> void:
+	_ad_screen = Control.new()
+	_full(_ad_screen)
+	_ad_screen.mouse_filter = Control.MOUSE_FILTER_STOP
+	_ad_screen.visible = false
+	var bg := ColorRect.new()
+	bg.color = Color(0.04, 0.04, 0.08, 0.98)
+	_full(bg)
+	_ad_screen.add_child(bg)
+	var box := VBoxContainer.new()
+	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	box.offset_left = -480
+	box.offset_right = 480
+	box.offset_top = -260
+	box.offset_bottom = 260
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ad_screen.add_child(box)
+	_ad_title = _label(100)
+	_ad_title.text = "AD PLAYING"
+	box.add_child(_ad_title)
+	_ad_sub = _label(42)
+	_ad_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_ad_sub.modulate = Color(0.8, 0.85, 1.0)
+	box.add_child(_ad_sub)
+	add_child(_ad_screen)
 
 func _build_stamp() -> void:
 	_stamp = _label(26, HORIZONTAL_ALIGNMENT_LEFT, 6)
@@ -438,6 +581,7 @@ func prewarm_show(on: bool) -> void:
 	_stall.visible = on
 	_hint.visible = on
 	_banner.visible = on
+	_ad_screen.visible = on   # (drawn under the splash)
 	if on:
 		_rusty_says.text = "Rusty: " + Rusty.GREETING
 		_result.text = "LANDED  1,234 m   NEW BEST!\n+99 scrap (88 distance, 7 from 3 pickups, 4 zone bonus)\nFarthest zone: Cheese Moon\nMISSION DONE: Collect 40 scrap in one flight  +45"
@@ -611,7 +755,7 @@ func _on_buy(id: String) -> void:
 	buy_pressed.emit(id)
 
 ## Refresh every text in the shop from the save. `last` = the last run's result, or empty.
-func refresh_shop(last: Dictionary) -> void:
+func refresh_shop(last: Dictionary, boost_ready: bool = false) -> void:
 	_shop_scrap.text = "SCRAP  %s" % Tuning.fmt(Save.scrap)
 	_shop_best.text = "BEST  %s m" % Tuning.fmt(Save.best_distance)
 	var sk := Save.zone_best * 1000 + int(_zone_progress(Save.best_distance, Save.zone_best) * 50.0)
@@ -632,11 +776,15 @@ func refresh_shop(last: Dictionary) -> void:
 		if last["mission_bonus"] > 0:
 			t += ", %s missions" % Tuning.fmt(last["mission_bonus"])
 		t += ")  ·  %s" % Tuning.zone_name(last["zone"])
+		if last.get("daily", {}).size() > 0:
+			var dd: Dictionary = last["daily"]
+			t += "\nDAILY: %s / %s m%s" % [Tuning.fmt(dd["distance"]), Tuning.fmt(dd["target"]), "   BONUS +" + Tuning.fmt(dd["bonus"]) if dd["bonus"] > 0 else ""]
 		for m in last["missions"]:
 			t += "\nMISSION DONE: %s  +%s" % [m["text"], Tuning.fmt(m["reward"])]
 		_result.text = t
 		_result.modulate = Color(1, 0.95, 0.5) if last["new_best"] else Color(1, 1, 1)
 		_rusty_says.text = "Rusty: " + last["rusty"]
+	_refresh_extras(last, boost_ready)
 	for i in Missions.SLOTS:
 		if i < Save.missions.size():
 			_mission_rows[i].text = "• " + Missions.describe(Save.missions[i])
@@ -696,6 +844,54 @@ func refresh_shop(last: Dictionary) -> void:
 			lb.disabled = false
 			_set_button_style(lb, _btn_afford if Save.can_buy_launcher(ld["id"]) else _btn_poor)
 
+## (called at the end of refresh_shop)
+func _refresh_extras(last: Dictionary = {}, boost_ready: bool = false) -> void:
+	_refresh_style()
+	_refresh_daily(last)
+	_refresh_ads(last, boost_ready)
+
+## The fake ad: a full-screen "AD PLAYING" for `seconds`, then `done` is called. A real ad SDK would be called
+## here instead; nothing else in the game needs to change. `reward_text` ("" for an interstitial) says what it pays.
+func show_ad(title: String, reward_text: String, seconds: float, done: Callable) -> void:
+	if ad_active:
+		return
+	ad_active = true
+	_ad_left = seconds
+	_ad_callback = done
+	_ad_title.text = title
+	_ad_sub.text = ("Reward: %s\n\n(stub - a real ad would play here)" % reward_text) if reward_text != "" else "(stub - a real ad would play here)"
+	_ad_screen.visible = true
+
+func _end_ad() -> void:
+	ad_active = false
+	_ad_screen.visible = false
+	var cb := _ad_callback
+	_ad_callback = Callable()
+	if cb.is_valid():
+		cb.call()
+
+## In flight: the daily target line ("" hides it).
+func set_daily_label(text: String) -> void:
+	_daily_label.visible = text != ""
+	_daily_label.text = text
+
+func _refresh_daily(last: Dictionary) -> void:
+	var key := Save.daily_key
+	_daily_title.text = "DAILY LAUNCH  ·  %d-%02d-%02d" % [key / 10000, (key / 100) % 100, key % 100]
+	var status := "Reached! Today's bonus is yours." if Save.daily_claimed else "Not reached yet. Fly %s m or more for the bonus." % Tuning.fmt(Save.daily_target)
+	_daily_info.text = "Same world for everyone today.\nTarget %s m   ·   Bonus +%s scrap\nBest today %s m   ·   %d flight%s\n%s" % [Tuning.fmt(Save.daily_target), Tuning.fmt(Save.daily_reward()), Tuning.fmt(Save.daily_best), Save.daily_plays, "" if Save.daily_plays == 1 else "s", status]
+
+## Show or hide the ad buttons: the rewarded ones only make sense after a flight / before a launch.
+func _refresh_ads(last: Dictionary, boost_ready: bool) -> void:
+	var on := Tuning.ads_enabled
+	_ad_double_btn.visible = on
+	_ad_boost_btn.visible = on
+	var can_double: bool = not last.is_empty() and last["earned"] > 0 and not last.get("doubled", false)
+	_ad_double_btn.disabled = not can_double
+	_ad_double_btn.text = "AD: DOUBLE LAST SCRAP" if (last.is_empty() or can_double) else "SCRAP DOUBLED ✓"
+	_ad_boost_btn.disabled = boost_ready
+	_ad_boost_btn.text = "FREE BOOST READY ✓" if boost_ready else "AD: FREE BOOST CHARGE"
+
 ## Slingshot: the aim read-out and hint while pulling back.
 func show_aim(on: bool, power: float, angle: float) -> void:
 	if not on:
@@ -716,6 +912,10 @@ func show_aim(on: bool, power: float, angle: float) -> void:
 
 func _process(delta: float) -> void:
 	_time += delta
+	if ad_active:
+		_ad_left -= delta
+		if _ad_left <= 0.0:
+			_end_ad()
 	for i in POPUPS:
 		var l := _pop_labels[i]
 		if not l.visible or mode != MODE_FLIGHT:

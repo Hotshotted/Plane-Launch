@@ -12,7 +12,8 @@ signal changed
 ##   3: zone_best (farthest zone reached; each zone pays its bonus once)
 ##   4: missions (three active), missions_done
 ##   5: frames owned + equipped, launchers owned + equipped
-const VERSION := 5
+##   6: cosmetics (owned + equipped paint, hat, trail), the daily launch (day, target, best, claimed), ad counters
+const VERSION := 6
 
 var path := "user://save.json"      # (tests point this somewhere else)
 var scrap := 0.0
@@ -24,6 +25,17 @@ var frames_owned := {"scrapper": true}
 var frame := "scrapper"            # equipped frame
 var launchers_owned := {"ramp": true}
 var launcher := "ramp"             # equipped launcher
+var cosmetics_owned := {}            # "paint:red" -> true ...
+var paint := "default"
+var hat := "none"
+var trail := "none"
+var daily_key := 0                   # the day (YYYYMMDD, UTC) the daily numbers belong to
+var daily_target := 0                # meters to reach for the bonus
+var daily_best := 0.0
+var daily_claimed := false
+var daily_plays := 0
+var flights_since_ad := 0            # flights since the last interstitial stub
+var day_key_override := 0            # (tests set a day)
 var missions: Array = []             # three active missions (see Missions.gd)
 var missions_done := 0
 var zone_best := 0                  # index of the farthest zone ever reached
@@ -46,6 +58,16 @@ func _defaults() -> void:
 	frame = "scrapper"
 	launchers_owned = {"ramp": true}
 	launcher = "ramp"
+	cosmetics_owned = {}
+	paint = "default"
+	hat = "none"
+	trail = "none"
+	daily_key = 0
+	daily_target = 0
+	daily_best = 0.0
+	daily_claimed = false
+	daily_plays = 0
+	flights_since_ad = 0
 	for u in Tuning.upgrades:
 		levels[u["id"]] = 0
 
@@ -87,6 +109,9 @@ func _migrate(d: Dictionary) -> Dictionary:
 		v = 4
 	if v < 5:
 		d["version"] = 5   # v4 -> v5: frames and launchers (the starters are always owned)
+		v = 5
+	if v < 6:
+		d["version"] = 6   # v5 -> v6: cosmetics, the daily launch (nothing owned / no day yet)
 	return d
 
 func _apply(d: Dictionary) -> void:
@@ -122,6 +147,20 @@ func _apply(d: Dictionary) -> void:
 	launcher = String(d.get("launcher", "ramp"))
 	if not launchers_owned.has(launcher):
 		launcher = "ramp"
+	var co: Variant = d.get("cosmetics_owned", {})
+	if co is Dictionary:
+		for k in co:
+			if bool(co[k]) and String(k).contains(":"):
+				cosmetics_owned[String(k)] = true
+	paint = _equipped("paint", String(d.get("paint", "default")))
+	hat = _equipped("hat", String(d.get("hat", "none")))
+	trail = _equipped("trail", String(d.get("trail", "none")))
+	daily_key = maxi(int(d.get("daily_key", 0)), 0)
+	daily_target = maxi(int(d.get("daily_target", 0)), 0)
+	daily_best = maxf(float(d.get("daily_best", 0.0)), 0.0)
+	daily_claimed = bool(d.get("daily_claimed", false))
+	daily_plays = maxi(int(d.get("daily_plays", 0)), 0)
+	flights_since_ad = maxi(int(d.get("flights_since_ad", 0)), 0)
 	var sn: Variant = d.get("seen", {})
 	if sn is Dictionary:
 		for k in sn:
@@ -131,7 +170,10 @@ func _apply(d: Dictionary) -> void:
 func to_dict() -> Dictionary:
 	return {"version": VERSION, "scrap": scrap, "best_distance": best_distance, "runs": runs,
 			"total_distance": total_distance, "levels": levels.duplicate(), "seen": seen.duplicate(), "zone_best": zone_best, "missions": missions.duplicate(true), "missions_done": missions_done,
-			"frames_owned": frames_owned.duplicate(), "frame": frame, "launchers_owned": launchers_owned.duplicate(), "launcher": launcher}
+			"frames_owned": frames_owned.duplicate(), "frame": frame, "launchers_owned": launchers_owned.duplicate(), "launcher": launcher,
+			"cosmetics_owned": cosmetics_owned.duplicate(), "paint": paint, "hat": hat, "trail": trail,
+			"daily_key": daily_key, "daily_target": daily_target, "daily_best": daily_best, "daily_claimed": daily_claimed, "daily_plays": daily_plays,
+			"flights_since_ad": flights_since_ad}
 
 func save_game() -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)
@@ -247,6 +289,80 @@ func equip_launcher(id: String) -> bool:
 	launcher = id
 	save_game()
 	return true
+
+# ---- cosmetics ----
+## The equipped id of a kind if it is owned (or the free starter), else the starter.
+func _equipped(kind: String, id: String) -> String:
+	return id if owns_cosmetic(kind, id) else Cosmetics.starter(kind)
+
+func owns_cosmetic(kind: String, id: String) -> bool:
+	return id == Cosmetics.starter(kind) or cosmetics_owned.has(kind + ":" + id)
+
+func equipped(kind: String) -> String:
+	match kind:
+		"hat":
+			return hat
+		"trail":
+			return trail
+	return paint
+
+func _set_equipped(kind: String, id: String) -> void:
+	match kind:
+		"hat":
+			hat = id
+		"trail":
+			trail = id
+		_:
+			paint = id
+
+func buy_cosmetic(kind: String, id: String) -> bool:
+	var d := Cosmetics.def(kind, id)
+	if d["id"] != id or owns_cosmetic(kind, id) or scrap < float(d["cost"]):
+		return false
+	scrap -= float(d["cost"])
+	cosmetics_owned[kind + ":" + id] = true
+	_set_equipped(kind, id)
+	save_game()
+	return true
+
+func equip_cosmetic(kind: String, id: String) -> bool:
+	if not owns_cosmetic(kind, id):
+		return false
+	_set_equipped(kind, id)
+	save_game()
+	return true
+
+# ---- the daily launch ----
+## Today as YYYYMMDD (UTC).
+func day_key() -> int:
+	if day_key_override > 0:
+		return day_key_override
+	var d := Time.get_date_dict_from_system(true)
+	return int(d["year"]) * 10000 + int(d["month"]) * 100 + int(d["day"])
+
+## The seed of today's world: the same for everyone on the same day.
+func daily_seed(key: int = 0) -> int:
+	return hash("junkyard-launch-%d" % (key if key > 0 else day_key())) & 0x7fffffff
+
+## A new day starts a fresh target (stretching from the player's best) and clears yesterday's result.
+## Returns true if a new day began. Not saved here: the next save writes it.
+func refresh_daily() -> bool:
+	var key := day_key()
+	if key == daily_key and daily_target > 0:
+		return false
+	daily_key = key
+	var r := RandomNumberGenerator.new()
+	r.seed = daily_seed(key) + 17
+	var base := maxf(best_distance, 120.0)
+	daily_target = int(roundf(base * r.randf_range(0.8, 1.25) / 5.0)) * 5
+	daily_best = 0.0
+	daily_claimed = false
+	daily_plays = 0
+	return true
+
+## Scrap for reaching today's target (paid once per day).
+func daily_reward() -> int:
+	return int(roundf((daily_target * 0.8 + 100.0) * Tuning.daily_reward_mult / 5.0)) * 5
 
 func add_scrap(n: float) -> void:
 	scrap = maxf(scrap + n, 0.0)

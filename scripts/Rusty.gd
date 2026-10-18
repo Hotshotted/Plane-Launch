@@ -35,6 +35,10 @@ const MISSION := [
 	"Another mission in the bag. Here's your scrap!",
 	"Ha! That's how you do missions.",
 ]
+const DAILY := [
+	"Daily target smashed! Take the bonus, you earned it.",
+	"That's the daily done. Same sky for everybody, kid, and you beat it!",
+]
 const ZONE := [
 	"New territory! I've never been out that far.",
 	"A whole new zone! Don't forget to wave.",
@@ -45,7 +49,9 @@ const ZONE := [
 static func comment(ctx: Dictionary) -> String:
 	var run := int(ctx["run"])
 	var list: Array
-	if ctx["new_best"] and ctx["best_before"] > 0.0:
+	if ctx.get("daily_reached", false):
+		list = DAILY
+	elif ctx["new_best"] and ctx["best_before"] > 0.0:
 		list = RECORD
 	elif ctx["new_zone"]:
 		list = ZONE

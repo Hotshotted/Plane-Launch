@@ -235,6 +235,16 @@ func launcher_speed(id: String, l: int) -> float:
 			return sled_speed + launcher_step * l
 	return ramp_lip_speed(l)
 
+# ---------- Daily launch and ad stubs ----------
+var daily_reward_mult := 1.0
+## The fake "Ad playing" screen lasts this long (s). Real ad SDKs would replace Hud.show_ad().
+var ad_seconds := 3.0
+## An interstitial stub shows between flights at most every this many flights (never in the first few).
+var interstitial_every := 4
+var interstitial_first_flight := 4
+var ads_enabled := true
+var trail_rate := 0.04            # seconds between trail particles
+
 # ---------- Missions ----------
 ## Multiplies every mission's scrap reward.
 var mission_reward_mult := 1.0
