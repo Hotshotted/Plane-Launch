@@ -11,7 +11,8 @@ signal changed
 ##   2: seen (which things have been explained by a first-time popup)
 ##   3: zone_best (farthest zone reached; each zone pays its bonus once)
 ##   4: missions (three active), missions_done
-const VERSION := 4
+##   5: frames owned + equipped, launchers owned + equipped
+const VERSION := 5
 
 var path := "user://save.json"      # (tests point this somewhere else)
 var scrap := 0.0
@@ -19,6 +20,10 @@ var best_distance := 0.0            # meters, the farthest touchdown so far
 var runs := 0
 var total_distance := 0.0
 var levels := {}                    # upgrade id -> level
+var frames_owned := {"scrapper": true}
+var frame := "scrapper"            # equipped frame
+var launchers_owned := {"ramp": true}
+var launcher := "ramp"             # equipped launcher
 var missions: Array = []             # three active missions (see Missions.gd)
 var missions_done := 0
 var zone_best := 0                  # index of the farthest zone ever reached
@@ -37,6 +42,10 @@ func _defaults() -> void:
 	zone_best = 0
 	missions = []
 	missions_done = 0
+	frames_owned = {"scrapper": true}
+	frame = "scrapper"
+	launchers_owned = {"ramp": true}
+	launcher = "ramp"
 	for u in Tuning.upgrades:
 		levels[u["id"]] = 0
 
@@ -75,6 +84,9 @@ func _migrate(d: Dictionary) -> Dictionary:
 		if not d.has("missions_done"):
 			d["missions_done"] = 0
 		d["version"] = 4
+		v = 4
+	if v < 5:
+		d["version"] = 5   # v4 -> v5: frames and launchers (the starters are always owned)
 	return d
 
 func _apply(d: Dictionary) -> void:
@@ -94,6 +106,22 @@ func _apply(d: Dictionary) -> void:
 			if m is Dictionary and Missions.TYPES.has(String(m.get("type", ""))):
 				missions.append({"type": String(m["type"]), "target": maxi(int(m.get("target", 1)), 1), "reward": maxi(int(m.get("reward", 5)), 0), "zone": clampi(int(m.get("zone", 0)), 0, Zones.COUNT - 1)})
 		missions = missions.slice(0, Missions.SLOTS)
+	var fo: Variant = d.get("frames_owned", {})
+	if fo is Dictionary:
+		for f in Tuning.frames:
+			if bool(fo.get(f["id"], false)):
+				frames_owned[f["id"]] = true
+	frame = String(d.get("frame", "scrapper"))
+	if not frames_owned.has(frame):
+		frame = "scrapper"
+	var lo: Variant = d.get("launchers_owned", {})
+	if lo is Dictionary:
+		for l in Tuning.launchers:
+			if bool(lo.get(l["id"], false)):
+				launchers_owned[l["id"]] = true
+	launcher = String(d.get("launcher", "ramp"))
+	if not launchers_owned.has(launcher):
+		launcher = "ramp"
 	var sn: Variant = d.get("seen", {})
 	if sn is Dictionary:
 		for k in sn:
@@ -102,7 +130,8 @@ func _apply(d: Dictionary) -> void:
 
 func to_dict() -> Dictionary:
 	return {"version": VERSION, "scrap": scrap, "best_distance": best_distance, "runs": runs,
-			"total_distance": total_distance, "levels": levels.duplicate(), "seen": seen.duplicate(), "zone_best": zone_best, "missions": missions.duplicate(true), "missions_done": missions_done}
+			"total_distance": total_distance, "levels": levels.duplicate(), "seen": seen.duplicate(), "zone_best": zone_best, "missions": missions.duplicate(true), "missions_done": missions_done,
+			"frames_owned": frames_owned.duplicate(), "frame": frame, "launchers_owned": launchers_owned.duplicate(), "launcher": launcher}
 
 func save_game() -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)
@@ -167,6 +196,57 @@ func claim_zones(zone_max: int) -> Dictionary:
 func ensure_missions(rng: RandomNumberGenerator) -> void:
 	if missions.size() < Missions.SLOTS:
 		Missions.fill(self, rng)
+
+## Everything the flight needs to build the glider and its launcher: upgrade levels plus the equipped frame and launcher.
+func loadout() -> Dictionary:
+	var d := levels.duplicate()
+	d["frame"] = frame
+	d["launcher"] = launcher
+	return d
+
+func owns_frame(id: String) -> bool:
+	return frames_owned.has(id)
+
+func buy_frame(id: String) -> bool:
+	var cost := Tuning.frame_cost(id)
+	if owns_frame(id) or scrap < cost:
+		return false
+	scrap -= cost
+	frames_owned[id] = true
+	frame = id
+	save_game()
+	return true
+
+func equip_frame(id: String) -> bool:
+	if not owns_frame(id):
+		return false
+	frame = id
+	save_game()
+	return true
+
+func owns_launcher(id: String) -> bool:
+	return launchers_owned.has(id)
+
+## Launchers are bought in order: the one before must be owned.
+func can_buy_launcher(id: String) -> bool:
+	var i := Tuning.launcher_index(id)
+	return not owns_launcher(id) and i > 0 and owns_launcher(Tuning.launchers[i - 1]["id"]) and scrap >= Tuning.launcher_cost(id)
+
+func buy_launcher(id: String) -> bool:
+	if not can_buy_launcher(id):
+		return false
+	scrap -= Tuning.launcher_cost(id)
+	launchers_owned[id] = true
+	launcher = id
+	save_game()
+	return true
+
+func equip_launcher(id: String) -> bool:
+	if not owns_launcher(id):
+		return false
+	launcher = id
+	save_game()
+	return true
 
 func add_scrap(n: float) -> void:
 	scrap = maxf(scrap + n, 0.0)

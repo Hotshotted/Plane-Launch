@@ -35,6 +35,7 @@ const PH_RAMP := 1    # rolling down the ramp
 const PH_AIR := 2     # flying
 const PH_SLIDE := 3   # touched down, skidding to a stop
 const PH_DONE := 4    # stopped: the run is over
+const PH_AIM := 5     # slingshot: pulling back to aim, waiting for the release
 
 const BELLY := 0.55   # glider centre to its underside (m)
 
@@ -81,6 +82,16 @@ var lv_wings := 0
 var lv_body := 0
 var lv_booster := 0
 var lv_magnet := 0
+var frame_id := "scrapper"
+var launcher_id := "ramp"
+# frame traits (Tuning.frame_stats)
+var tr_lift := 1.0
+var tr_drag := 1.0
+var tr_gravity := 1.0
+var tr_slow := 0.0
+var tr_climb := 0.0
+var tr_bounce := 1.0
+var tr_bird := 1.0
 var lift_k_eff := 0.0
 var drag0_eff := 0.0
 var magnet_r := 0.0
@@ -93,6 +104,13 @@ var ramp_len := 0.0            # along the path
 var ramp_u := 0.0              # distance the glider has rolled
 var ramp_speed := 0.0
 var ramp_psi := 0.0            # direction of the ramp where the glider is (rad, + = up)
+var path_kind := 0             # 0: rolls down the ramp (energy), 1: pushed along the path (catapult, sled, slingshot)
+var start_speed := 0.0         # speed at the start of a pushed path
+var lip_speed := 0.0           # speed leaving the launcher
+var pivot := Vector2.ZERO      # catapult: where the arm turns
+var aim_power := 0.0           # slingshot: 0..1
+var aim_angle := 30.0          # slingshot: degrees
+var _pivot_tmp := PackedVector2Array([Vector2.ZERO])
 
 # --- the run ---
 var distance := 0.0            # meters: live while flying, final at touchdown
@@ -151,6 +169,8 @@ func reset(levels: Dictionary, seed_value: int = -1) -> void:
 	lv_body = int(levels.get("body", 0))
 	lv_booster = int(levels.get("booster", 0))
 	lv_magnet = int(levels.get("magnet", 0))
+	frame_id = String(levels.get("frame", "scrapper"))
+	launcher_id = String(levels.get("launcher", "ramp"))
 	refresh_derived()
 	if seed_value >= 0:
 		rng.seed = seed_value
@@ -185,22 +205,94 @@ func reset(levels: Dictionary, seed_value: int = -1) -> void:
 	zone = 0
 	zone_max = 0
 	skips = 0
-	_gravity = Tuning.gravity * float(Zones.list[0]["gravity"])
+	_update_gravity()
 	vx = 0.0
 	vy = 0.0
-	ramp_len = Tuning.build_ramp(lv_ramp, ramp_pts)
-	ramp_top = ramp_pts[0]
+	aim_power = 0.65   # (the slingshot waits pulled back, so the bands are visible; LAUNCH starts the aim from zero)
+	aim_angle = Tuning.sling_default_angle
+	_build_launcher()
 	ramp_u = 0.0
-	ramp_speed = Tuning.ramp_push(lv_ramp)
 	_place_on_ramp()
 	gen_x = Tuning.first_chunk_x
 
 ## Recompute the numbers the upgrades change (also called when a ?tune slider moves).
 func refresh_derived() -> void:
-	lift_k_eff = Tuning.wing_lift_k(lv_wings)
-	drag0_eff = Tuning.body_drag0(lv_body)
+	var st := Tuning.frame_stats(frame_id)
+	tr_lift = st["lift"]
+	tr_drag = st["drag"]
+	tr_gravity = st["gravity"]
+	tr_slow = st["slow"]
+	tr_climb = st["climb"]
+	tr_bounce = st["bounce"]
+	tr_bird = st["bird"]
+	lift_k_eff = Tuning.wing_lift_k(lv_wings) * tr_lift
+	drag0_eff = Tuning.body_drag0(lv_body) * tr_drag
+	_update_gravity()
 	magnet_r = Tuning.magnet_radius(lv_magnet)
 	thrust = Tuning.booster_thrust(lv_booster)
+
+func _update_gravity() -> void:
+	_gravity = Tuning.gravity * float(Zones.list[zone]["gravity"]) * tr_gravity
+
+## Build the launcher's path for the equipped launcher and level.
+func _build_launcher() -> void:
+	match launcher_id:
+		"catapult":
+			ramp_len = Tuning.build_catapult(ramp_pts, _pivot_tmp)
+			pivot = _pivot_tmp[0]
+			path_kind = 1
+			start_speed = 6.0
+			lip_speed = Tuning.launcher_speed("catapult", lv_ramp)
+		"sled":
+			ramp_len = Tuning.build_sled(ramp_pts)
+			path_kind = 1
+			start_speed = 8.0
+			lip_speed = Tuning.launcher_speed("sled", lv_ramp)
+		"sling":
+			_build_sling()
+		_:
+			ramp_len = Tuning.build_ramp(lv_ramp, ramp_pts)
+			path_kind = 0
+			start_speed = Tuning.ramp_push(lv_ramp)
+			lip_speed = Tuning.ramp_lip_speed(lv_ramp)
+	ramp_top = ramp_pts[0]
+	ramp_speed = start_speed
+
+## The slingshot: a straight path from the pulled-back pouch to the fork, pointing along the aim.
+func _build_sling() -> void:
+	if ramp_pts.size() != Tuning.RAMP_N + 1:
+		ramp_pts.resize(Tuning.RAMP_N + 1)
+	var a := deg_to_rad(aim_angle)
+	var pull := 0.8 + 4.5 * aim_power
+	var anchor := Vector2(0.0, 5.0)
+	var dir := Vector2(cos(a), sin(a))
+	var s := anchor - dir * pull
+	for i in Tuning.RAMP_N + 1:
+		ramp_pts[i] = s.lerp(anchor, float(i) / Tuning.RAMP_N)
+	ramp_len = pull
+	path_kind = 1
+	lip_speed = Tuning.launcher_speed("sling", lv_ramp) * lerpf(Tuning.sling_min_power, 1.0, aim_power)
+	start_speed = lip_speed * 0.3
+
+## Slingshot: change the pull (power 0..1, angle in degrees) while aiming.
+func set_aim(power: float, angle_deg: float) -> void:
+	if phase != PH_AIM and phase != PH_READY:
+		return
+	aim_power = clampf(power, 0.0, 1.0)
+	aim_angle = clampf(angle_deg, Tuning.sling_angle_min, Tuning.sling_angle_max)
+	_build_sling()
+	ramp_top = ramp_pts[0]
+	ramp_u = 0.0
+	_place_on_ramp()
+
+## Slingshot: let go. Needs some pull.
+func fire() -> bool:
+	if phase != PH_AIM or aim_power < 0.2:
+		return false
+	phase = PH_RAMP
+	ramp_u = 0.0
+	push_event(EV_LAUNCH, x, y)
+	return true
 
 func clear_things() -> void:
 	for i in MAX_THINGS:
@@ -222,8 +314,19 @@ func _place_on_ramp() -> void:
 func launch() -> void:
 	if phase != PH_READY:
 		return
+	if launcher_id == "sling":
+		phase = PH_AIM   # wait for the pull and release
+		set_aim(0.0, Tuning.sling_default_angle)
+		return
 	phase = PH_RAMP
 	push_event(EV_LAUNCH, x, y)
+
+## Launch without interaction (tests, the balance sim): the slingshot fires at full pull and the default angle.
+func launch_auto() -> void:
+	launch()
+	if phase == PH_AIM:
+		set_aim(1.0, Tuning.sling_default_angle)
+		fire()
 
 # ---------------------------------------------------------------------------------------------
 # Stepping
@@ -250,15 +353,18 @@ func step(dt: float, hold: bool) -> void:
 
 func _step_ramp(dt: float) -> void:
 	clock += dt
-	var push := Tuning.ramp_push(lv_ramp)
-	var fall := ramp_top.y - (y - cos(ramp_psi) * BELLY)
-	ramp_speed = sqrt(push * push + 2.0 * Tuning.gravity * maxf(fall, 0.0))
-	ramp_u += ramp_speed * dt
+	if path_kind == 0:
+		var push := Tuning.ramp_push(lv_ramp)
+		var fall := ramp_top.y - (y - cos(ramp_psi) * BELLY)
+		ramp_speed = sqrt(push * push + 2.0 * Tuning.gravity * maxf(fall, 0.0))
+	else:
+		ramp_speed = sqrt(start_speed * start_speed + (lip_speed * lip_speed - start_speed * start_speed) * clampf(ramp_u / ramp_len, 0.0, 1.0))
+	ramp_u += maxf(ramp_speed, 1.0) * dt
 	if ramp_u >= ramp_len:
 		# Off the lip: free flight in the direction of the lip.
 		ramp_u = ramp_len
 		_place_on_ramp()
-		var s := sqrt(push * push + 2.0 * Tuning.gravity * (ramp_top.y - ramp_pts[Tuning.RAMP_N].y))
+		var s := lip_speed
 		vx = s * cos(ramp_psi)
 		vy = s * sin(ramp_psi)
 		theta = ramp_psi
@@ -301,6 +407,8 @@ func _step_air(dt: float, hold: bool) -> void:
 	var ny := vx / s
 	var ax := nx * lift - drag * vx / s
 	var ay := ny * lift - drag * vy / s - _gravity
+	if vy > 0.0 and tr_climb > 0.0:
+		ay -= _gravity * tr_climb
 	if st > 0.0:
 		theta -= deg_to_rad(Tuning.stall_nose_drop) * st * dt
 	# --- booster ---
@@ -326,6 +434,10 @@ func _step_air(dt: float, hold: bool) -> void:
 	_was_in_fan = in_fan
 	vx += ax * dt
 	vy += ay * dt
+	if tr_slow > 0.0:
+		var keep := 1.0 - tr_slow * dt
+		vx *= keep
+		vy *= keep
 	var sp := sqrt(vx * vx + vy * vy)
 	if sp > 90.0:
 		vx *= 90.0 / sp
@@ -336,7 +448,7 @@ func _step_air(dt: float, hold: bool) -> void:
 	var zi := Tuning.zone_index(x)
 	if zi != zone:
 		zone = zi
-		_gravity = Tuning.gravity * float(Zones.list[zi]["gravity"])
+		_update_gravity()
 		if zi > zone_max:
 			zone_max = zi
 			push_event(EV_ZONE, x, y, zi)
@@ -389,7 +501,7 @@ func _touch_things(dt: float) -> void:
 				var base := t_y[i]
 				if vy < 0.0 and y - BELLY <= base + Tuning.pad_height and y - BELLY >= base - 0.6 and absf(x - tx) < Tuning.pad_half_width + 0.4:
 					var vy_in := vy
-					vy = maxf(-vy * Tuning.pad_restitution, Tuning.pad_min_kick)
+					vy = maxf(-vy * Tuning.pad_restitution, Tuning.pad_min_kick) * tr_bounce
 					y = base + Tuning.pad_height + BELLY
 					t_phase[i] = 0.35
 					pad_bounces += 1
@@ -404,8 +516,9 @@ func _touch_things(dt: float) -> void:
 					t_active[i] = 0
 					thing_count -= 1
 					var sp_in := speed()
-					vx *= Tuning.bird_slow
-					vy *= Tuning.bird_slow
+					var bs := pow(Tuning.bird_slow, tr_bird)
+					vx *= bs
+					vy *= bs
 					bird_hits += 1
 					push_event(EV_BIRD, t_x[i], t_y[i], roundi(sp_in - speed()))
 
@@ -415,7 +528,7 @@ func _ground_contact() -> void:
 	var sp := speed()
 	if clock <= Tuning.max_flight_seconds:
 		if kind == 1 and sp >= Tuning.skip_min_speed and vy >= -Tuning.skip_max_sink:
-			vy = maxf(-vy * Tuning.skip_restitution, Tuning.skip_min_kick)
+			vy = maxf(-vy * Tuning.skip_restitution, Tuning.skip_min_kick) * tr_bounce
 			vx *= Tuning.skip_speed_kept
 			y = BELLY + 0.02
 			skips += 1
@@ -423,7 +536,7 @@ func _ground_contact() -> void:
 			return
 		var bounce := float(zd["bounce"])
 		if bounce > 0.0 and vy < -2.0:
-			vy = -vy * bounce
+			vy = -vy * bounce * tr_bounce
 			y = BELLY + 0.02
 			skips += 1
 			push_event(EV_SKIP, x, 0.0, 2)

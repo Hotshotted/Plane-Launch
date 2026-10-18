@@ -34,6 +34,18 @@ const ENTRIES := [
 	["booster_accel", "Booster thrust (lvl 1)", 1.0, 40.0, 0.5],
 	["booster_accel_step", "Booster thrust / level", 0.0, 5.0, 0.1],
 	["booster_time", "Booster burst (s)", 0.2, 2.0, 0.05],
+	["sling_speed", "Slingshot speed", 10.0, 80.0, 1.0],
+	["catapult_speed", "Catapult speed", 10.0, 90.0, 1.0],
+	["sled_speed", "Rocket sled speed", 10.0, 120.0, 1.0],
+	["launcher_step", "Launcher speed / level", 0.0, 6.0, 0.1],
+	["sling_pull_px", "Slingshot full pull (px)", 80.0, 600.0, 10.0],
+	["feather_lift", "Featherweight lift", 0.8, 1.8, 0.01],
+	["feather_slow", "Featherweight speed loss", 0.0, 0.15, 0.005],
+	["anvil_drag", "Anvil drag", 0.4, 1.2, 0.01],
+	["anvil_climb", "Anvil climb penalty", 0.0, 1.2, 0.01],
+	["pogo_bounce", "Pogo bounce x", 1.0, 2.5, 0.05],
+	["frame_price_mult", "Frame price x", 0.1, 5.0, 0.05],
+	["launcher_price_mult", "Launcher price x", 0.1, 5.0, 0.05],
 	["boost_kick_m", "Boost camera kick (m)", 0.0, 6.0, 0.1],
 	["boost_kick_zoom", "Boost zoom pulse", 0.0, 0.2, 0.01],
 	["magnet_base", "Magnet reach (lvl 0)", 0.8, 4.0, 0.1],
@@ -204,6 +216,10 @@ func build() -> void:
 	complete_missions.pressed.connect(complete_all_missions)
 	complete_missions.set_meta("debug", "complete_missions")
 	unlock_row.add_child(complete_missions)
+	var unlock_gear := _make_button("Unlock frames + launchers", 30)
+	unlock_gear.pressed.connect(unlock_all_gear)
+	unlock_gear.set_meta("debug", "unlock_gear")
+	unlock_row.add_child(unlock_gear)
 	column.add_child(unlock_row)
 	_out = _make_label("", 26, HORIZONTAL_ALIGNMENT_LEFT)
 	_out.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -265,6 +281,15 @@ func _on_slider(value: float, property: String) -> void:
 func _on_toggle(on: bool, property: String) -> void:
 	Tuning.set(property, on)
 	changed.emit(property)
+
+## Debug: own every frame and launcher (nothing is paid, what is equipped stays).
+func unlock_all_gear() -> void:
+	for f in Tuning.frames:
+		Save.frames_owned[f["id"]] = true
+	for l in Tuning.launchers:
+		Save.launchers_owned[l["id"]] = true
+	Save.save_game()
+	_out.text = "All frames and launchers unlocked."
 
 ## Debug: pay out every active mission and draw three new ones.
 func complete_all_missions() -> void:

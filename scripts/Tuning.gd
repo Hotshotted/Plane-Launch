@@ -141,6 +141,100 @@ var skip_speed_kept := 0.97
 ## Longest flight (s): a safety stop so a bouncing glider can never fly forever.
 var max_flight_seconds := 240.0
 
+# ---------- Frames (every upgrade applies to every frame) ----------
+## Featherweight: lighter and lifty, so it glides farther, but it slows down faster (extra drag, birds hurt more).
+var feather_lift := 1.3
+var feather_drag := 1.05
+var feather_gravity := 0.82
+var feather_slow := 0.012         # extra speed loss per second (1/s)
+var feather_bird := 1.35          # bird hits cost this power more speed (bird_slow ^ this)
+## Anvil: heavy and slippery: dives fast, but climbs badly.
+var anvil_lift := 0.95
+var anvil_drag := 0.72
+var anvil_gravity := 1.08
+var anvil_climb := 0.45           # extra gravity while climbing (fraction of g)
+var anvil_bird := 0.45            # birds barely slow it (bird_slow ^ this)
+## Pogo: every bounce (pads, water, clouds) gives this much more.
+var pogo_bounce := 1.4
+var pogo_lift := 1.0
+var frame_price_mult := 1.0
+
+## id, name, price, what it does. Scrapper is the starter.
+var frames: Array[Dictionary] = [
+	{"id": "scrapper", "name": "Scrapper", "cost": 0.0, "desc": "Balanced. Where everyone starts."},
+	{"id": "feather", "name": "Featherweight", "cost": 300.0, "desc": "Glides farther, slows faster."},
+	{"id": "anvil", "name": "Anvil", "cost": 550.0, "desc": "Dives fast, shrugs off birds, bad at climbing."},
+	{"id": "pogo", "name": "Pogo", "cost": 900.0, "desc": "Extra bounce from every bounce."},
+]
+
+func frame_def(id: String) -> Dictionary:
+	for f in frames:
+		if f["id"] == id:
+			return f
+	return frames[0]
+
+func frame_cost(id: String) -> float:
+	return roundf(float(frame_def(id)["cost"]) * frame_price_mult)
+
+## The numbers a frame changes: lift, drag, gravity, extra drag, climb penalty, bounce, bird exponent.
+func frame_stats(id: String) -> Dictionary:
+	match id:
+		"feather":
+			return {"lift": feather_lift, "drag": feather_drag, "gravity": feather_gravity, "slow": feather_slow, "climb": 0.0, "bounce": 1.0, "bird": feather_bird}
+		"anvil":
+			return {"lift": anvil_lift, "drag": anvil_drag, "gravity": anvil_gravity, "slow": 0.0, "climb": anvil_climb, "bounce": 1.0, "bird": anvil_bird}
+		"pogo":
+			return {"lift": pogo_lift, "drag": 1.0, "gravity": 1.0, "slow": 0.0, "climb": 0.0, "bounce": pogo_bounce, "bird": 1.0}
+	return {"lift": 1.0, "drag": 1.0, "gravity": 1.0, "slow": 0.0, "climb": 0.0, "bounce": 1.0, "bird": 1.0}
+
+# ---------- Launchers (big milestone purchases; the Ramp upgrade scales them all) ----------
+## Launch speed (m/s) at upgrade level 0 for the launchers that are not a rolling ramp, and the gain per level.
+var sling_speed := 27.0
+var catapult_speed := 37.0
+var sled_speed := 48.0
+var launcher_step := 2.2
+## Slingshot: the pull needed for full power (px), the weakest launch as a fraction, the aim limits.
+var sling_pull_px := 260.0
+var sling_min_power := 0.55
+var sling_angle_min := 8.0
+var sling_angle_max := 62.0
+var sling_default_angle := 30.0
+var launcher_price_mult := 1.0
+
+## id, name, price, how it launches. Bought in order: each one needs the one before it.
+var launchers: Array[Dictionary] = [
+	{"id": "ramp", "name": "Ramp", "cost": 0.0, "desc": "Roll down the ramp and fly."},
+	{"id": "sling", "name": "Slingshot", "cost": 1200.0, "desc": "Pull back to aim and power, let go."},
+	{"id": "catapult", "name": "Catapult", "cost": 5000.0, "desc": "A big wooden arm hurls you."},
+	{"id": "sled", "name": "Rocket Sled", "cost": 18000.0, "desc": "Rockets on rails, then up."},
+]
+
+func launcher_def(id: String) -> Dictionary:
+	for l in launchers:
+		if l["id"] == id:
+			return l
+	return launchers[0]
+
+func launcher_index(id: String) -> int:
+	for i in launchers.size():
+		if launchers[i]["id"] == id:
+			return i
+	return 0
+
+func launcher_cost(id: String) -> float:
+	return roundf(float(launcher_def(id)["cost"]) * launcher_price_mult)
+
+## Launch speed at the end of the launcher for an upgrade level (the ramp's depends on its height).
+func launcher_speed(id: String, l: int) -> float:
+	match id:
+		"sling":
+			return sling_speed + launcher_step * l
+		"catapult":
+			return catapult_speed + launcher_step * l
+		"sled":
+			return sled_speed + launcher_step * l
+	return ramp_lip_speed(l)
+
 # ---------- Missions ----------
 ## Multiplies every mission's scrap reward.
 var mission_reward_mult := 1.0
@@ -219,6 +313,39 @@ func build_ramp(l: int, pts: PackedVector2Array) -> float:
 		pts[i - 1] = p
 	return total
 
+## Fill `pts` for the Catapult: an arc of a swinging arm (radius 6 m) from behind and below up to release at the lip.
+## Returns the path length. The arm pivot is returned in `pivot_out[0]`.
+func build_catapult(pts: PackedVector2Array, pivot_out: PackedVector2Array) -> float:
+	if pts.size() != RAMP_N + 1:
+		pts.resize(RAMP_N + 1)
+	var r := 6.0
+	var a0 := deg_to_rad(190.0)
+	var a1 := deg_to_rad(308.0)   # the tangent here points 38 degrees up
+	var lip := Vector2(0.0, 7.0)
+	var pivot := lip - Vector2(cos(a1), sin(a1)) * r
+	pivot_out[0] = pivot
+	for i in RAMP_N + 1:
+		var a := lerpf(a0, a1, float(i) / RAMP_N)
+		pts[i] = pivot + Vector2(cos(a), sin(a)) * r
+	return absf(a1 - a0) * r
+
+## Fill `pts` for the Rocket Sled: a long flat track kicking up at the end. Returns the path length.
+func build_sled(pts: PackedVector2Array) -> float:
+	if pts.size() != RAMP_N + 1:
+		pts.resize(RAMP_N + 1)
+	var total := 34.0
+	var curve := 8.0
+	var ds := total / RAMP_N
+	var psi_lip := deg_to_rad(22.0)
+	var p := Vector2(0.0, 3.5)
+	pts[RAMP_N] = p
+	for i in range(RAMP_N, 0, -1):
+		var e := (RAMP_N - i + 0.5) * ds
+		var psi := lerpf(psi_lip, 0.0, smoothstep(0.0, 1.0, e / curve))
+		p -= Vector2(cos(psi), sin(psi)) * ds
+		pts[i - 1] = p
+	return total
+
 ## Speed at the lip (m/s) for a Ramp level.
 func ramp_lip_speed(l: int) -> float:
 	build_ramp(l, _ramp_tmp)
@@ -245,6 +372,8 @@ func glide_ratio(wing_level: int, body_level: int) -> float:
 	return wing_lift_k(wing_level) / (2.0 * sqrt(body_drag0(body_level) * drag_ind))
 
 ## "14 -> 16 m/s" style text for the shop: the stat now and at the next level.
+var current_launcher := "ramp"   # set by Main: the equipped launcher (the "ramp" upgrade acts on it)
+
 func effect_text(id: String, level: int) -> String:
 	var nxt := mini(level + 1, max_level(id))
 	var maxed := level >= max_level(id)
@@ -256,7 +385,7 @@ func effect_text(id: String, level: int) -> String:
 func _stat_text(id: String, l: int) -> String:
 	match id:
 		"ramp":
-			return "launch %d m/s" % roundi(ramp_lip_speed(l))
+			return "launch %d m/s" % roundi(launcher_speed(current_launcher, l))
 		"wings":
 			return "lift +%d%%" % roundi(wings_lift_step * l * 100.0)
 		"body":

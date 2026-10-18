@@ -11,7 +11,7 @@ var tn: Node
 func fly(levels: Dictionary, seed_value: int, mode: int = 0):
 	var f = load("res://scripts/Flight.gd").new()
 	f.reset(levels, seed_value)
-	f.launch()
+	f.launch_auto()
 	var t := 0.0
 	var hold := false
 	while not f.is_over() and t < 400.0:
@@ -53,11 +53,42 @@ func lv(r := 0, w := 0, b := 0, bo := 0, m := 0) -> Dictionary:
 
 func _initialize() -> void:
 	tn = root.get_node("Tuning")
-	var only_ladder := OS.get_cmdline_user_args().has("ladder")
-	if not only_ladder:
-		singles()
-	ladder()
+	var args := OS.get_cmdline_user_args()
+	if args.has("gear"):
+		gear()
+	else:
+		if not args.has("ladder"):
+			singles()
+		ladder()
 	quit(0)
+
+## Frames and launchers: same upgrades, different gear.
+func gear() -> void:
+	for lvl in [0, 3, 6]:
+		var base := lv(lvl, lvl, lvl, mini(lvl, 3), 0)
+		var line := "levels %d:" % lvl
+		for f in tn.frames:
+			var d := base.duplicate()
+			d["frame"] = f["id"]
+			var a := avg(d)
+			line += "  %s %.0f m (%.0f scrap)" % [f["id"], a["dist"], a["scrap"]]
+		print(line)
+	for lvl in [0, 3, 6]:
+		var base := lv(lvl, lvl, lvl, mini(lvl, 3), 0)
+		var line := "launchers at level %d:" % lvl
+		for l in tn.launchers:
+			var d := base.duplicate()
+			d["launcher"] = l["id"]
+			var a := avg(d)
+			line += "  %s %.0f m" % [l["id"], a["dist"]]
+		print(line)
+	var top := lv(10, 10, 10, 8, 8)
+	var line2 := "maxed:"
+	for l in tn.launchers:
+		var d2 := top.duplicate()
+		d2["launcher"] = l["id"]
+		line2 += "  %s %.0f m" % [l["id"], avg(d2)["dist"]]
+	print(line2)
 
 func singles() -> void:
 	var base := avg(lv())

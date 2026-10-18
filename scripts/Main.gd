@@ -32,6 +32,8 @@ var _touch_hold := PackedByteArray()
 var _touch_boost := PackedByteArray()
 var _key_hold := false
 var _touch_seen := false
+var _aim_index := -1                 # the finger pulling the slingshot
+var _aim_start := Vector2.ZERO
 
 # frame time
 var _skip_frames := 0
@@ -52,6 +54,8 @@ func _ready() -> void:
 	add_child(hud)
 	hud.launch_pressed.connect(launch)
 	hud.buy_pressed.connect(_on_buy)
+	hud.frame_pressed.connect(_on_frame)
+	hud.launcher_pressed.connect(_on_launcher)
 	Save.changed.connect(_on_save_changed)
 	if DebugFlags.tune_enabled():
 		tune_panel = TunePanel.new()
@@ -73,11 +77,26 @@ func _ready() -> void:
 
 var _prewarm_zone_idx := -1
 var prewarm_zones_seen := {}   # zones whose scenery was drawn during the pre-warm
+var prewarm_frames_seen := {}
+var prewarm_launchers_seen := {}
+var _prewarm_levels := {}
 
 ## Pre-warm: show zone `zi`'s scenery with one of every thing, so each zone's shapes are drawn once at boot.
 func _prewarm_zone(zi: int) -> void:
 	_prewarm_zone_idx = zi
 	prewarm_zones_seen[zi] = true
+	var lo := _prewarm_levels.duplicate()
+	lo["frame"] = Tuning.frames[zi % Tuning.frames.size()]["id"]
+	lo["launcher"] = Tuning.launchers[zi % Tuning.launchers.size()]["id"]
+	prewarm_frames_seen[lo["frame"]] = true
+	prewarm_launchers_seen[lo["launcher"]] = true
+	flight.reset(lo, 1)
+	flight.best_x = 18.0
+	flight.boost_left = 5.0
+	flight.stall_amount = 1.0
+	if lo["launcher"] == "sling":
+		flight.set_aim(0.8, 35.0)
+		flight.phase = Flight.PH_AIM
 	flight.clear_things()
 	var x0 := Tuning.zone_start(zi) + (0.0 if zi == 0 else 6.0)
 	cam_x = x0 - 6.0
@@ -89,9 +108,11 @@ func _prewarm_zone(zi: int) -> void:
 	flight.add_thing(Flight.K_PAD, x0 + 4.0, base)
 	flight.add_thing(Flight.K_FAN, x0 + 12.0, base)
 	flight.add_thing(Flight.K_BIRD, x0 + 18.0, 12.0)
-	flight.x = x0 + 8.0
-	flight.y = 14.0
-	flight.theta = 0.1
+	if flight.phase != Flight.PH_AIM and zi % 2 == 0:
+		flight.phase = Flight.PH_AIR
+		flight.x = x0 + 8.0
+		flight.y = 14.0
+		flight.theta = 0.1
 	_apply_camera()
 
 func _prewarm() -> void:
@@ -103,10 +124,7 @@ func _prewarm() -> void:
 	var maxed := {}
 	for u in Tuning.upgrades:
 		maxed[u["id"]] = u["max"]
-	flight.reset(maxed, 1)
-	flight.best_x = 18.0
-	flight.boost_left = 5.0
-	flight.stall_amount = 1.0
+	_prewarm_levels = maxed
 	world.best_text = "BEST 99 m"
 	world.show_aura = true
 	cam_ppm = 20.0
@@ -159,7 +177,8 @@ func _to_shop(snap: bool = true) -> void:
 	world.clear_particles()
 	world.show_aura = false
 	Save.ensure_missions(rng)
-	flight.reset(Save.levels)
+	Tuning.current_launcher = Save.launcher
+	flight.reset(Save.loadout())
 	flight.best_x = Save.best_distance
 	_set_best_text()
 	hud.set_mode(Hud.MODE_SHOP)
@@ -179,7 +198,7 @@ func launch() -> void:
 	restart_count += 1
 	_skip_frames = Tuning.resume_skip_frames
 	_note_event("run started")
-	flight.reset(Save.levels)
+	flight.reset(Save.loadout())
 	flight.best_x = Save.best_distance
 	_set_best_text()
 	world.clear_particles()
@@ -218,16 +237,34 @@ func _on_buy(id: String) -> void:
 	if state == STATE_SHOP:
 		Save.buy(id)
 
+## A frames row was pressed: equip it if owned, buy it (and equip) if not.
+func _on_frame(id: String) -> void:
+	if state != STATE_SHOP:
+		return
+	if Save.owns_frame(id):
+		Save.equip_frame(id)
+	else:
+		Save.buy_frame(id)
+
+func _on_launcher(id: String) -> void:
+	if state != STATE_SHOP:
+		return
+	if Save.owns_launcher(id):
+		Save.equip_launcher(id)
+	else:
+		Save.buy_launcher(id)
+
 func _on_save_changed() -> void:
+	Tuning.current_launcher = Save.launcher
 	if state == STATE_SHOP and not _warming:
-		flight.reset(Save.levels)
+		flight.reset(Save.loadout())
 		flight.best_x = Save.best_distance
 		hud.refresh_shop(last_result)
 
 func _on_tuning_changed(_property: String) -> void:
 	flight.refresh_derived()
 	if state == STATE_SHOP:
-		flight.reset(Save.levels)
+		flight.reset(Save.loadout())
 		hud.refresh_shop(last_result)
 
 # ---------------------------------------------------------------------------------------------
@@ -243,20 +280,37 @@ func _input(event: InputEvent) -> void:
 		if not event.pressed:
 			_touch_hold[i] = 0
 			_touch_boost[i] = 0
+			if i == _aim_index:
+				_aim_index = -1
+				if flight.phase == Flight.PH_AIM and not flight.fire():
+					flight.set_aim(0.0, flight.aim_angle)   # too weak a pull: try again
 			return
 		if state != STATE_FLIGHT or TunePanel.button_hit(event.position):
+			return
+		if flight.phase == Flight.PH_AIM:
+			_aim_index = i
+			_aim_start = event.position
 			return
 		if hud.boost_rect().has_point(event.position):
 			_touch_boost[i] = 1
 			flight.boost()
 		else:
 			_touch_hold[i] = 1
+	elif event is InputEventScreenDrag:
+		if event.index == _aim_index and flight.phase == Flight.PH_AIM:
+			_aim_from_drag(event.position - _aim_start)
 	elif event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_B or event.keycode == KEY_SHIFT:
 			if state == STATE_FLIGHT:
 				flight.boost()
 		elif (event.keycode == KEY_ENTER or event.keycode == KEY_SPACE) and state == STATE_SHOP and not (tune_panel and tune_panel.is_open):
 			launch()
+
+## Slingshot: a pull of `d` pixels (screen) sets power by its length and the angle from its direction.
+func _aim_from_drag(d: Vector2) -> void:
+	var power := clampf(d.length() / Tuning.sling_pull_px, 0.0, 1.0)
+	var ang := rad_to_deg(atan2(d.y, maxf(-d.x, 0.001)))   # pull down-left to launch up-right
+	flight.set_aim(power, ang)
 
 func is_holding() -> bool:
 	for i in MAX_TOUCHES:
@@ -337,7 +391,12 @@ func frame(delta: float, raw_delta: float = 0.0) -> void:
 			_finish_timer += delta
 			if _finish_timer >= FINISH_DELAY:
 				_to_shop()
-	if state == STATE_FLIGHT:
+	if state == STATE_FLIGHT and flight.phase == Flight.PH_AIM:
+		hud.set_zone(0, 0, Save.zone_best, 0.0)
+		hud.set_flight(0.0, 0, 0.0, flight.altitude(), false, flight.charges, flight.charges_max, false)
+		hud.show_aim(true, flight.aim_power, flight.aim_angle)
+	elif state == STATE_FLIGHT:
+		hud.show_aim(false, 0.0, 0.0)
 		hud.set_zone(flight.zone, flight.zone_max, Save.zone_best, flight.distance)
 		hud.set_flight(flight.distance, flight.picked_value, flight.speed(), flight.altitude(),
 				flight.stall_amount > 0.0, flight.charges, flight.charges_max, flight.boost_left > 0.0)

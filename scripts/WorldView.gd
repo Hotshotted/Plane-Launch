@@ -54,6 +54,7 @@ static var BOOM := PackedVector2Array([Vector2(-2.0, -0.15), Vector2(-3.6, -0.3)
 static var HORSESHOE := PackedVector2Array([Vector2(-0.5, -0.5), Vector2(-0.2, -0.5), Vector2(-0.2, 0.0), Vector2(0.2, 0.0), Vector2(0.2, -0.5), Vector2(0.5, -0.5), Vector2(0.5, 0.2), Vector2(0.3, 0.5), Vector2(-0.3, 0.5), Vector2(-0.5, 0.2)])
 static var ARROW_UP := PackedVector2Array([Vector2(0, -0.5), Vector2(0.5, 0.0), Vector2(0.2, 0.0), Vector2(0.2, 0.5), Vector2(-0.2, 0.5), Vector2(-0.2, 0.0), Vector2(-0.5, 0.0)])
 static var STAR := PackedVector2Array([Vector2(0, -0.5), Vector2(0.09, -0.09), Vector2(0.5, 0), Vector2(0.09, 0.09), Vector2(0, 0.5), Vector2(-0.09, 0.09), Vector2(-0.5, 0), Vector2(-0.09, -0.09)])
+static var ANVIL := PackedVector2Array([Vector2(-2.0, -0.5), Vector2(1.6, -0.62), Vector2(2.3, -0.1), Vector2(2.0, 0.72), Vector2(-1.9, 0.72), Vector2(-2.2, 0.0)])
 static var FLAME := PackedVector2Array([Vector2(0, -0.28), Vector2(-1.0, 0.0), Vector2(0, 0.28)])
 
 # set by Main every frame
@@ -65,6 +66,7 @@ var best_text := ""
 var best_x := 0.0
 var show_aura := false
 var boost_fx := 0.0     # 0..1 while a boost burns: speed lines
+var _chord_mult := 1.0  # wing length factor of the frame being drawn
 var showcase := false   # pre-warm: draw one of everything
 
 var _font: Font
@@ -601,6 +603,112 @@ func _draw_signs() -> void:
 func _draw_ramp() -> void:
 	if flight.ramp_pts.size() != Tuning.RAMP_N + 1:
 		return
+	match flight.launcher_id:
+		"sling":
+			_draw_sling()
+			return
+		"catapult":
+			_draw_catapult()
+			return
+		"sled":
+			_draw_sled()
+			return
+	_draw_plain_ramp()
+
+## The Slingshot: a forked post, rubber bands to the glider's pouch (they snap back after the release), and
+## while aiming a dotted path showing roughly where you will go.
+func _draw_sling() -> void:
+	var f := flight
+	var fork := Vector2(_sx(0.0), _sy(5.0))
+	var u := _ppm
+	# the post
+	draw_line(Vector2(fork.x, _ground_sy), fork + Vector2(0, 0.4 * u), BLACK, 20.0)
+	draw_line(Vector2(fork.x, _ground_sy), fork + Vector2(0, 0.4 * u), Color(0.55, 0.38, 0.22), 13.0)
+	var left := fork + Vector2(-1.1 * u, -1.3 * u)
+	var right := fork + Vector2(1.1 * u, -1.3 * u)
+	for tip in [left, right]:
+		draw_line(fork + Vector2(0, 0.4 * u), tip, BLACK, 16.0)
+		draw_line(fork + Vector2(0, 0.4 * u), tip, Color(0.55, 0.38, 0.22), 10.0)
+	# the bands: stretched to the glider while it is held / pulled, wobbling shut afterwards
+	var pouch := Vector2(_sx(f.x), _sy(f.y))
+	if f.phase == Flight.PH_AIM or f.phase == Flight.PH_READY or f.phase == Flight.PH_RAMP:
+		for tip in [left, right]:
+			draw_line(tip, pouch, BLACK, 9.0)
+			draw_line(tip, pouch, Color(0.85, 0.25, 0.2), 5.0)
+	else:
+		var amp := exp(-minf(f.time_in_air, 2.0) * 7.0) * sin(f.time_in_air * 55.0) * 0.5 * u
+		var mid := fork + Vector2(0, -1.0 * u + amp)
+		for tip in [left, right]:
+			draw_line(tip, mid, BLACK, 9.0)
+			draw_line(tip, mid, Color(0.85, 0.25, 0.2), 5.0)
+	# the aim preview: ballistic dots from the fork along the launch direction
+	if f.phase == Flight.PH_AIM:
+		var a := deg_to_rad(f.aim_angle)
+		var v := f.lip_speed
+		var g := Tuning.gravity
+		for k in 14:
+			var t := 0.12 * (k + 1)
+			var p := Vector2(_sx(v * cos(a) * t), _sy(5.0 + v * sin(a) * t - 0.5 * g * t * t))
+			draw_circle(p, 6.0 - k * 0.25, Color(1, 1, 1, 0.9 - k * 0.05))
+
+## The Catapult: a wooden frame, a long arm with a counterweight, the glider riding the arm tip.
+func _draw_catapult() -> void:
+	var f := flight
+	var piv := Vector2(_sx(f.pivot.x), _sy(f.pivot.y))
+	var u := _ppm
+	var wood := Color(0.6, 0.42, 0.25)
+	# legs and base
+	for dx in [-2.2, 2.2]:
+		draw_line(Vector2(piv.x + dx * u, _ground_sy), piv, BLACK, 20.0)
+		draw_line(Vector2(piv.x + dx * u, _ground_sy), piv, wood, 13.0)
+	_box(piv.x, _ground_sy, 7.0 * u, 0.7 * u, wood.darkened(0.2))
+	# the arm: from the counterweight end through the pivot to the tip where the glider sits
+	var end := Vector2(f.x, f.y)
+	if f.phase == Flight.PH_AIR or f.phase == Flight.PH_SLIDE or f.phase == Flight.PH_DONE:
+		var last := f.ramp_pts[Tuning.RAMP_N]
+		end = last
+	else:
+		end = Vector2(f.x, f.y) if f.phase == Flight.PH_RAMP else f.ramp_pts[0]
+	var tip := Vector2(_sx(end.x), _sy(end.y))
+	var back := piv - (tip - piv) * 0.35
+	draw_line(back, tip, BLACK, 18.0)
+	draw_line(back, tip, wood.lightened(0.15), 11.0)
+	_poly(OCT, back, 0.0, Vector2(0.9, 0.9) * u, Color(0.35, 0.35, 0.4))
+	_poly(OCT, piv, 0.0, Vector2(0.45, 0.45) * u, Color(0.25, 0.25, 0.3), 2.0)
+
+## The Rocket Sled: a long rail on posts with a rocket-powered cart under the glider.
+func _draw_sled() -> void:
+	var f := flight
+	var u := _ppm
+	var pts := f.ramp_pts
+	var n := Tuning.RAMP_N + 1
+	var a := Vector2(_sx(pts[0].x), _sy(pts[0].y))
+	# posts
+	for k in 6:
+		var p := pts[int(float(k) / 5.0 * (n - 1))]
+		var sx := _sx(p.x)
+		draw_line(Vector2(sx, _ground_sy), Vector2(sx, _sy(p.y - 0.3)), BLACK, 12.0)
+		draw_line(Vector2(sx, _ground_sy), Vector2(sx, _sy(p.y - 0.3)), Color(0.5, 0.5, 0.55), 7.0)
+	for i in n:
+		_ramp_top_line[i] = Vector2(_sx(pts[i].x), _sy(pts[i].y))
+	draw_polyline(_ramp_top_line, BLACK, 12.0)
+	draw_polyline(_ramp_top_line, Color(0.75, 0.75, 0.8), 6.0)
+	for k in 17:
+		var p2 := pts[int(float(k) / 16.0 * (n - 1))]
+		draw_line(Vector2(_sx(p2.x), _sy(p2.y)) + Vector2(0, 3), Vector2(_sx(p2.x), _sy(p2.y)) + Vector2(0, 0.45 * u), Color(0.45, 0.35, 0.25), 5.0)
+	# the cart rides under the glider until the lip, then stays there
+	var cart_world := Vector2(f.x, f.y - Flight.BELLY - 0.35)
+	if f.phase == Flight.PH_AIR or f.phase == Flight.PH_SLIDE or f.phase == Flight.PH_DONE:
+		cart_world = pts[n - 1] + Vector2(0, -0.1)
+	var cart := Vector2(_sx(cart_world.x), _sy(cart_world.y))
+	var rot := -f.ramp_psi if f.phase == Flight.PH_RAMP or f.phase == Flight.PH_READY else -deg_to_rad(22.0)
+	_poly(RECT, cart, rot, Vector2(3.2, 0.7) * u, Color(0.8, 0.2, 0.15))
+	_poly(RECT, cart + Vector2(-1.7 * u * cos(rot), -1.7 * u * sin(rot)), rot, Vector2(1.2, 0.8) * u, Color(0.3, 0.3, 0.35), 2.5)
+	if f.phase == Flight.PH_RAMP:
+		var fl := 1.6 + 0.8 * sin(_time * 60.0)
+		_poly(FLAME, cart + Vector2(-2.7 * u * cos(rot), -2.7 * u * sin(rot)), rot + PI, Vector2(fl, 1.1) * u, Color(1.0, 0.7, 0.15), 2.5)
+
+func _draw_plain_ramp() -> void:
 	var n := Tuning.RAMP_N + 1
 	var thick := 0.7
 	var pts := flight.ramp_pts
@@ -842,6 +950,22 @@ func _draw_glider() -> void:
 	var wing_cols := [Color(0.66, 0.67, 0.66), Color(0.78, 0.3, 0.24), Color(0.3, 0.55, 0.85), Color(0.95, 0.95, 0.9)]
 	var wtier := 0 if wl < 3 else (1 if wl < 6 else (2 if wl < 9 else 3))
 	var wing_col: Color = wing_cols[wtier]
+	# frame look: shape, colours and wings
+	var fuse_sc := Vector2(u, u)
+	_chord_mult = 1.0
+	match f.frame_id:
+		"feather":
+			body_col = Color(0.88, 0.92, 0.98).darkened(0.04 * (3 - tier))
+			wing_col = Color(0.96, 0.9, 0.7).lerp(wing_col, 0.25)
+			fuse_sc = Vector2(u * 1.08, u * 0.72)
+			_chord_mult = 1.3
+		"anvil":
+			body_col = Color(0.36, 0.38, 0.44).lightened(0.05 * tier)
+			wing_col = Color(0.5, 0.52, 0.56).lerp(wing_col, 0.2)
+			_chord_mult = 0.78
+		"pogo":
+			body_col = Color(0.28, 0.74, 0.36).lightened(0.05 * tier)
+			wing_col = Color(1.0, 0.85, 0.25).lerp(wing_col, 0.2)
 	# --- booster pods (behind everything) ---
 	var pods := mini(3, (f.lv_booster + 2) / 3) if f.lv_booster > 0 else 0
 	for k in pods:
@@ -860,10 +984,16 @@ func _draw_glider() -> void:
 		_poly(BOOM, o, rot, Vector2(u, u), body_col.darkened(0.2))
 	# --- rear wing (biplane) ---
 	if wl >= 3:
-		_wing(o, rot, Vector2(-0.6, 0.15), 1.7 + 0.14 * wl, wing_col.darkened(0.12), 0.0)
+		_wing(o, rot, Vector2(-0.6, 0.15), (1.7 + 0.14 * wl) * _chord_mult, wing_col.darkened(0.12), 0.0)
 	# --- fuselage ---
 	var fuse := TUB if tier == 0 else (FUSE_MID if tier == 1 else FUSE_SLEEK)
-	_poly(fuse, o, rot, Vector2(u, u), body_col)
+	if f.frame_id == "anvil":
+		fuse = ANVIL
+	elif f.frame_id == "feather":
+		fuse = FUSE_SLEEK
+	elif f.frame_id == "pogo":
+		fuse = TUB
+	_poly(fuse, o, rot, fuse_sc, body_col)
 	if tier >= 2:
 		_poly(RECT, o + Vector2(0.2 * c - 0.1 * s, 0.2 * s + 0.1 * c) * u, rot, Vector2(4.2, 0.14) * u, Color(0.95, 0.95, 0.95), 1.0)
 	# --- pilot ---
@@ -873,9 +1003,19 @@ func _draw_glider() -> void:
 	if tier >= 3:
 		_poly(DIAMOND, o + Vector2(0.4 * c + 0.55 * s, 0.4 * s - 0.55 * c) * u, rot, Vector2(1.7, 1.25) * u, Color(0.6, 0.85, 0.95, 0.75), 2.5)
 	# --- front wing: bigger and better with every Wings level ---
-	_wing(o, rot, Vector2(0.4, -0.45), 1.7 + 0.14 * wl, wing_col, 1.0)
-	# --- wheels ---
-	for wxp in [-1.1, 1.0]:
+	_wing(o, rot, Vector2(0.4, -0.45), (1.7 + 0.14 * wl) * _chord_mult, wing_col, 1.0)
+	# --- wheels (the Pogo bounces on a spring instead) ---
+	if f.frame_id == "pogo":
+		var top := o + Vector2(0.1 * c - 0.5 * s, 0.1 * s + 0.5 * c) * u
+		var bot := o + Vector2(0.1 * c - 2.0 * s, 0.1 * s + 2.0 * c) * u
+		for k in 9:
+			var t := k / 8.0
+			var side := (0.28 if k % 2 == 0 else -0.28) * (0.0 if k == 0 or k == 8 else 1.0)
+			_zig[k] = top.lerp(bot, t) + Vector2(side * c, side * s) * u
+		draw_polyline(_zig, BLACK, 8.0)
+		draw_polyline(_zig, Color(0.85, 0.85, 0.9), 4.0)
+		_poly(RECT, bot, rot, Vector2(0.9, 0.2) * u, Color(0.25, 0.25, 0.3), 2.5)
+	for wxp in ([] if f.frame_id == "pogo" else [-1.1, 1.0]):
 		var wp := o + Vector2(wxp * c - 0.62 * s, wxp * s + 0.62 * c) * u
 		_poly(OCT, wp, 0.0, Vector2(0.27, 0.27) * u, Color(0.2, 0.2, 0.22), 2.5)
 	# --- magnet ---

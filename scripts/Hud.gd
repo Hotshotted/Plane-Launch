@@ -7,6 +7,8 @@ extends CanvasLayer
 
 signal launch_pressed
 signal buy_pressed(id: String)
+signal frame_pressed(id: String)       # buy or equip a frame
+signal launcher_pressed(id: String)    # buy or equip a launcher
 
 const POPUPS := 6
 const PANEL_H := 1240          # height of the between-runs panel (px)
@@ -57,6 +59,12 @@ var _row_name: Array[Label] = []
 var _row_effect: Array[Label] = []
 var _row_btn: Array[Button] = []
 var _row_ids: Array[String] = []
+var _tab_buttons: Array[Button] = []
+var _tab_pages: Array[VBoxContainer] = []
+var _tab := 0
+var _frame_rows: Array[Dictionary] = []
+var _launcher_rows: Array[Dictionary] = []
+var _aim_key := -1
 var _launch_btn: Button
 var _btn_afford: StyleBoxFlat
 var _btn_poor: StyleBoxFlat
@@ -251,37 +259,46 @@ func _build_shop() -> void:
 	_btn_afford = _style(Color(0.2, 0.62, 0.3), Color.BLACK, 16, 4)
 	_btn_poor = _style(Color(0.3, 0.3, 0.34), Color.BLACK, 16, 4)
 	_btn_max = _style(Color(0.55, 0.45, 0.15), Color.BLACK, 16, 4)
+	# tabs: UPGRADES | FRAMES | LAUNCHERS
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 8)
+	col.add_child(tabs)
+	var holder := Control.new()   # the pages share one fixed-height area
+	holder.custom_minimum_size = Vector2(0, 5 * 78 + 4 * 8)
+	holder.clip_contents = true
+	col.add_child(holder)
+	for ti in 3:
+		var tb := Button.new()
+		tb.text = ["UPGRADES", "FRAMES", "LAUNCHERS"][ti]
+		tb.custom_minimum_size = Vector2(0, 64)
+		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tb.add_theme_font_size_override("font_size", 30)
+		tb.focus_mode = Control.FOCUS_NONE
+		tb.pressed.connect(show_tab.bind(ti))
+		tabs.add_child(tb)
+		_tab_buttons.append(tb)
+		var page := VBoxContainer.new()
+		page.add_theme_constant_override("separation", 8)
+		page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		page.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder.add_child(page)
+		_tab_pages.append(page)
 	for u in Tuning.upgrades:
-		var row := PanelContainer.new()
-		var rs := _style(Color(0.2, 0.23, 0.3), Color.BLACK, 16, 4)
-		rs.content_margin_top = 3
-		rs.content_margin_bottom = 3
-		row.add_theme_stylebox_override("panel", rs)
-		var h := HBoxContainer.new()
-		h.add_theme_constant_override("separation", 14)
-		row.add_child(h)
-		var v := VBoxContainer.new()
-		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		v.add_theme_constant_override("separation", 0)
-		h.add_child(v)
-		var nm := _label(34, HORIZONTAL_ALIGNMENT_LEFT, 0)
-		var ef := _label(24, HORIZONTAL_ALIGNMENT_LEFT, 0)
-		ef.modulate = Color(0.75, 0.9, 1.0)
-		v.add_child(nm)
-		v.add_child(ef)
-		var b := Button.new()
-		b.custom_minimum_size = Vector2(250, 70)
-		b.add_theme_font_size_override("font_size", 38)
-		for st in ["normal", "hover", "pressed", "disabled", "focus"]:
-			b.add_theme_stylebox_override(st, _btn_afford)
-		b.focus_mode = Control.FOCUS_NONE
-		b.pressed.connect(_on_buy.bind(u["id"]))
-		h.add_child(b)
-		col.add_child(row)
-		_row_name.append(nm)
-		_row_effect.append(ef)
-		_row_btn.append(b)
+		var r := _make_row(_tab_pages[0])
+		r["btn"].pressed.connect(_on_buy.bind(u["id"]))
+		_row_name.append(r["name"])
+		_row_effect.append(r["eff"])
+		_row_btn.append(r["btn"])
 		_row_ids.append(u["id"])
+	for f in Tuning.frames:
+		var r2 := _make_row(_tab_pages[1])
+		r2["btn"].pressed.connect(func(): frame_pressed.emit(f["id"]))
+		_frame_rows.append(r2)
+	for l in Tuning.launchers:
+		var r3 := _make_row(_tab_pages[2])
+		r3["btn"].pressed.connect(func(): launcher_pressed.emit(l["id"]))
+		_launcher_rows.append(r3)
+	show_tab(0)
 	var mtitle := _label(28, HORIZONTAL_ALIGNMENT_LEFT, 0)
 	mtitle.text = "MISSIONS  (from Rusty)"
 	mtitle.modulate = Color(0.8, 0.9, 1.0)
@@ -308,6 +325,45 @@ func _build_shop() -> void:
 	_launch_btn.focus_mode = Control.FOCUS_NONE
 	_launch_btn.pressed.connect(func(): launch_pressed.emit())
 	col.add_child(_launch_btn)
+
+## One shop row: a name, a one-line description, and a button on the right.
+func _make_row(page: Control) -> Dictionary:
+	var row := PanelContainer.new()
+	var rs := _style(Color(0.2, 0.23, 0.3), Color.BLACK, 16, 4)
+	rs.content_margin_top = 3
+	rs.content_margin_bottom = 3
+	row.add_theme_stylebox_override("panel", rs)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 14)
+	row.add_child(h)
+	var v := VBoxContainer.new()
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_theme_constant_override("separation", 0)
+	h.add_child(v)
+	var nm := _label(34, HORIZONTAL_ALIGNMENT_LEFT, 0)
+	var ef := _label(24, HORIZONTAL_ALIGNMENT_LEFT, 0)
+	ef.modulate = Color(0.75, 0.9, 1.0)
+	ef.clip_text = true
+	v.add_child(nm)
+	v.add_child(ef)
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(250, 70)
+	b.add_theme_font_size_override("font_size", 34)
+	_set_button_style(b, _btn_afford)
+	b.focus_mode = Control.FOCUS_NONE
+	h.add_child(b)
+	page.add_child(row)
+	return {"name": nm, "eff": ef, "btn": b}
+
+func _set_button_style(b: Button, st: StyleBoxFlat) -> void:
+	for sn in ["normal", "hover", "pressed", "disabled", "focus"]:
+		b.add_theme_stylebox_override(sn, st)
+
+func show_tab(i: int) -> void:
+	_tab = i
+	for k in _tab_pages.size():
+		_tab_pages[k].visible = k == i
+		_tab_buttons[k].modulate = Color(1, 1, 1) if k == i else Color(0.6, 0.65, 0.75)
 
 func _make_bar_inline(col: VBoxContainer) -> Dictionary:
 	var holder := Control.new()
@@ -369,6 +425,8 @@ func set_mode(m: int) -> void:
 	_bar_key = -1
 	_shop_bar_key = -1
 	_banner.visible = false
+	_hint.text = "HOLD = nose up\nRELEASE = nose down"
+	_aim_key = -1
 
 func show_splash(on: bool) -> void:
 	_splash.visible = on
@@ -594,10 +652,63 @@ func refresh_shop(last: Dictionary) -> void:
 		_row_effect[i].text = Tuning.effect_text(id, lv)
 		var b := _row_btn[i]
 		var st := _btn_max if Save.is_maxed(id) else (_btn_afford if Save.can_buy(id) else _btn_poor)
-		for sn in ["normal", "hover", "pressed", "disabled", "focus"]:
-			b.add_theme_stylebox_override(sn, st)
+		_set_button_style(b, st)
 		b.text = "MAX" if Save.is_maxed(id) else Tuning.fmt(Save.cost_of_next(id))
 		b.disabled = Save.is_maxed(id)
+	for i in Tuning.frames.size():
+		var fd: Dictionary = Tuning.frames[i]
+		var fr: Dictionary = _frame_rows[i]
+		fr["name"].text = fd["name"] + ("   ✓" if Save.frame == fd["id"] else "")
+		fr["eff"].text = fd["desc"]
+		var fb: Button = fr["btn"]
+		if Save.frame == fd["id"]:
+			fb.text = "EQUIPPED"
+			fb.disabled = true
+			_set_button_style(fb, _btn_max)
+		elif Save.owns_frame(fd["id"]):
+			fb.text = "EQUIP"
+			fb.disabled = false
+			_set_button_style(fb, _btn_afford)
+		else:
+			fb.text = Tuning.fmt(Tuning.frame_cost(fd["id"]))
+			fb.disabled = false
+			_set_button_style(fb, _btn_afford if Save.scrap >= Tuning.frame_cost(fd["id"]) else _btn_poor)
+	for i in Tuning.launchers.size():
+		var ld: Dictionary = Tuning.launchers[i]
+		var lr: Dictionary = _launcher_rows[i]
+		lr["name"].text = ld["name"] + ("   ✓" if Save.launcher == ld["id"] else "")
+		lr["eff"].text = "%s  (%d m/s)" % [ld["desc"], roundi(Tuning.launcher_speed(ld["id"], Save.level("ramp")))]
+		var lb: Button = lr["btn"]
+		if Save.launcher == ld["id"]:
+			lb.text = "EQUIPPED"
+			lb.disabled = true
+			_set_button_style(lb, _btn_max)
+		elif Save.owns_launcher(ld["id"]):
+			lb.text = "EQUIP"
+			lb.disabled = false
+			_set_button_style(lb, _btn_afford)
+		elif i > 0 and not Save.owns_launcher(Tuning.launchers[i - 1]["id"]):
+			lb.text = "LOCKED"
+			lb.disabled = true
+			_set_button_style(lb, _btn_poor)
+		else:
+			lb.text = Tuning.fmt(Tuning.launcher_cost(ld["id"]))
+			lb.disabled = false
+			_set_button_style(lb, _btn_afford if Save.can_buy_launcher(ld["id"]) else _btn_poor)
+
+## Slingshot: the aim read-out and hint while pulling back.
+func show_aim(on: bool, power: float, angle: float) -> void:
+	if not on:
+		if _aim_key != -1:
+			_aim_key = -1
+			_hint.text = "HOLD = nose up\nRELEASE = nose down"
+			_hint.visible = false
+		return
+	var key := int(power * 100.0) * 1000 + int(angle)
+	if key != _aim_key:
+		_aim_key = key
+		_hint.text = "PULL BACK, THEN LET GO!\nPOWER %d%%   ANGLE %d°" % [int(power * 100.0), int(angle)]
+	_hint.visible = true
 
 # ---------------------------------------------------------------------------------------------
 # Per frame, ?perf
