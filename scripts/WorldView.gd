@@ -7,7 +7,7 @@ extends Node2D
 
 const OUTLINE := 3.0
 const GLIDER_SCALE := 1.3
-const PARTICLES := 72
+const PARTICLES := 128
 const MAX_SIDES := 16
 
 # Particle kinds
@@ -52,6 +52,8 @@ static var FIN := PackedVector2Array([Vector2(-1.8, -0.3), Vector2(-3.0, -1.4), 
 static var STAB := PackedVector2Array([Vector2(-2.2, -0.2), Vector2(-3.5, -0.45), Vector2(-3.6, -0.15), Vector2(-2.2, 0.1)])
 static var BOOM := PackedVector2Array([Vector2(-2.0, -0.15), Vector2(-3.6, -0.3), Vector2(-3.6, -0.05), Vector2(-2.0, 0.2)])
 static var HORSESHOE := PackedVector2Array([Vector2(-0.5, -0.5), Vector2(-0.2, -0.5), Vector2(-0.2, 0.0), Vector2(0.2, 0.0), Vector2(0.2, -0.5), Vector2(0.5, -0.5), Vector2(0.5, 0.2), Vector2(0.3, 0.5), Vector2(-0.3, 0.5), Vector2(-0.5, 0.2)])
+static var ARROW_UP := PackedVector2Array([Vector2(0, -0.5), Vector2(0.5, 0.0), Vector2(0.2, 0.0), Vector2(0.2, 0.5), Vector2(-0.2, 0.5), Vector2(-0.2, 0.0), Vector2(-0.5, 0.0)])
+static var STAR := PackedVector2Array([Vector2(0, -0.5), Vector2(0.09, -0.09), Vector2(0.5, 0), Vector2(0.09, 0.09), Vector2(0, 0.5), Vector2(-0.09, 0.09), Vector2(-0.5, 0), Vector2(-0.09, -0.09)])
 static var FLAME := PackedVector2Array([Vector2(0, -0.28), Vector2(-1.0, 0.0), Vector2(0, 0.28)])
 
 # set by Main every frame
@@ -62,6 +64,7 @@ var ppm := 28.0          # pixels per meter (the camera zoom; the shop zooms out
 var best_text := ""
 var best_x := 0.0
 var show_aura := false
+var boost_fx := 0.0     # 0..1 while a boost burns: speed lines
 var showcase := false   # pre-warm: draw one of everything
 
 var _font: Font
@@ -70,6 +73,7 @@ var _line: Array[PackedVector2Array] = []
 var _ramp_fill := PackedVector2Array()
 var _ramp_top_line := PackedVector2Array()
 var _ramp_bot_line := PackedVector2Array()
+var _zig := PackedVector2Array()
 var _sign_text: Array[String] = []
 
 # particle pool
@@ -102,6 +106,7 @@ func _ready() -> void:
 	_ramp_fill.resize(rn * 2)
 	_ramp_top_line.resize(rn)
 	_ramp_bot_line.resize(rn)
+	_zig.resize(9)
 	for p in [_px, _py, _pvx, _pvy, _plife, _pmax, _psize]:
 		p.resize(PARTICLES)
 	_pkind.resize(PARTICLES)
@@ -224,6 +229,7 @@ func _draw() -> void:
 	_draw_things()
 	_draw_glider()
 	_draw_particles()
+	_draw_speed_lines()
 
 func _draw_sky() -> void:
 	var h := _size.y
@@ -391,38 +397,91 @@ func _draw_things() -> void:
 		var sy := _sy(f.t_y[i])
 		match f.t_kind[i]:
 			Flight.K_NUT:
-				_poly_sq(HEX, Vector2(sx, sy), _time * 1.5 + wx, 1.0, Color(0.78, 0.8, 0.84))
+				draw_circle(Vector2(sx, sy), 0.95 * _ppm, Color(1.0, 0.95, 0.6, 0.16))
+				_poly_sq(HEX, Vector2(sx, sy), _time * 1.5 + wx, 1.0, Color(0.82, 0.85, 0.9))
 				_poly_sq(HEX, Vector2(sx, sy), _time * 1.5 + wx, 0.4, Color(0.3, 0.33, 0.4), 2.0)
+				_glint(Vector2(sx, sy), wx, 1.0)
 			Flight.K_GEAR:
+				draw_circle(Vector2(sx, sy), 1.5 * _ppm, Color(1.0, 0.85, 0.3, 0.2))
 				_poly_sq(GEAR, Vector2(sx, sy), _time * 1.2, 0.95, Color(1.0, 0.78, 0.18))
 				_poly_sq(HEX, Vector2(sx, sy), _time * 1.2, 0.5, Color(0.55, 0.4, 0.1), 2.0)
+				_glint(Vector2(sx, sy), wx, 1.7)
 			Flight.K_PAD:
-				var squash := f.t_phase[i] / 0.35
-				var sh := 1.0 - 0.45 * squash
-				var base := Vector2(sx, _ground_sy)
-				_poly(OCT, base + Vector2(0, -0.35 * _ppm * sh), 0.0, Vector2(2.3, 0.4 * sh) * _ppm, Color(0.2, 0.2, 0.22))
-				_poly(OCT, base + Vector2(0, -0.8 * _ppm * sh - 0.3 * _ppm * squash), 0.0, Vector2(2.0, 0.4) * _ppm, Color(0.95, 0.5, 0.15))
+				_draw_pad(sx, f.t_phase[i], wx)
 			Flight.K_FAN:
 				_draw_fan(sx)
 			Flight.K_BIRD:
 				_draw_bird(sx, sy, wx)
 
+## The scrap glint: a thin white star that flashes now and then (each nut on its own beat).
+func _glint(o: Vector2, wx: float, scale: float) -> void:
+	var ph := fmod(_time * 0.9 + wx * 0.37, 1.0)
+	if ph < 0.22:
+		var k := sin(ph / 0.22 * PI)
+		if k < 0.12:
+			return
+		_poly(STAR, o + Vector2(-0.3, -0.35) * _ppm * scale, 0.0, Vector2(1.1, 1.1) * _ppm * scale * k, Color(1, 1, 1, 0.95), 1.0)
+
+## A bounce tire: two tyres on a coil spring that bobs, a big bouncing UP arrow above, and a
+## damped spring wobble after every bounce (`phase` counts down from 0.35 after a hit).
+func _draw_pad(sx: float, phase: float, wx: float) -> void:
+	var base_y := _ground_sy
+	var elapsed := 0.35 - phase
+	var disp := 0.0
+	if phase > 0.0:
+		disp = exp(-elapsed * 7.0) * cos(elapsed * 30.0)   # +1 = squashed down, then rebounds
+	var idle := sin(_time * 4.0 + wx) * 0.06
+	var lift := 0.9 - 0.45 * disp + idle                    # height of the top tyre above the base tyre (m)
+	_poly(OCT, Vector2(sx, base_y - 0.35 * _ppm), 0.0, Vector2(2.3, 0.4) * _ppm, Color(0.2, 0.2, 0.22))
+	# the coil between the tyres
+	for k in 9:
+		var t := k / 8.0
+		_zig[k] = Vector2(sx + (0.7 if k % 2 == 0 else -0.7) * _ppm * (0.4 if k == 0 or k == 8 else 1.0), base_y - (0.55 + t * lift) * _ppm)
+	draw_polyline(_zig, BLACK, 7.0)
+	draw_polyline(_zig, Color(0.85, 0.85, 0.9), 3.5)
+	var top_y := base_y - (0.8 + lift) * _ppm
+	_poly(OCT, Vector2(sx, top_y), 0.0, Vector2(2.0, 0.4 * (1.0 + 0.3 * disp)) * _ppm, Color(0.95, 0.5, 0.15))
+	# the big arrow
+	var bob := sin(_time * 5.0 + wx) * 0.35 + maxf(-disp, 0.0) * 1.2
+	var ay := top_y - (2.4 + bob) * _ppm
+	_poly(ARROW_UP, Vector2(sx, ay), 0.0, Vector2(2.4, 2.8) * _ppm, Color(1.0, 0.9, 0.2), 4.0)
+
+## An updraft fan on a stand, a faint wind column and chevrons rising through it.
 func _draw_fan(sx: float) -> void:
 	var gy := _ground_sy
 	var hub := Vector2(sx, gy - 1.7 * _ppm)
-	# draft streaks rising inside the column
-	for k in 5:
-		var ph := fmod(_time * 0.9 + k * 0.2, 1.0)
-		var wy := 1.5 + ph * Tuning.fan_height * 0.8
-		var dx := (float(k) - 2.0) * 0.8
-		var a := 0.5 * (1.0 - ph)
-		draw_line(Vector2(sx + dx * _ppm, _sy(wy)), Vector2(sx + dx * _ppm, _sy(wy + 1.6)), Color(1, 1, 1, a), 3.0)
+	var hw := Tuning.fan_half_width * _ppm
+	var col_h := Tuning.fan_height * _ppm
+	draw_rect(Rect2(sx - hw, gy - col_h, hw * 2.0, col_h), Color(0.75, 0.95, 1.0, 0.16))
+	for k in 12:
+		var ph := fmod(_time * 0.8 + k * 0.083, 1.0)
+		var dx := (_hash(k + 123) - 0.5) * 2.0 * Tuning.fan_half_width * 0.8
+		var p := Vector2(sx + dx * _ppm, gy - (2.0 + ph * (Tuning.fan_height - 2.0)) * _ppm)
+		var a := 0.85 * sin(ph * PI)
+		var w := 0.5 * _ppm
+		var c := Color(1, 1, 1, a)
+		draw_line(p + Vector2(-w, w * 0.6), p, Color(0, 0, 0, a * 0.7), 7.0)
+		draw_line(p + Vector2(w, w * 0.6), p, Color(0, 0, 0, a * 0.7), 7.0)
+		draw_line(p + Vector2(-w, w * 0.6), p, c, 4.0)
+		draw_line(p + Vector2(w, w * 0.6), p, c, 4.0)
 	_poly(TRI, Vector2(sx, gy - 0.9 * _ppm), 0.0, Vector2(2.6, 1.8) * _ppm, Color(0.45, 0.5, 0.55))
 	_poly(OCT, hub, 0.0, Vector2(1.5, 1.5) * _ppm, Color(0.8, 0.82, 0.85), 2.0)
 	var ang := _time * 14.0
 	for b in 3:
 		_poly(DIAMOND, hub + Vector2(cos(ang + b * TAU / 3.0), sin(ang + b * TAU / 3.0)) * 0.7 * _ppm, ang + b * TAU / 3.0, Vector2(1.4, 0.45) * _ppm, Color(0.3, 0.7, 0.95), 2.0)
 	_poly_sq(HEX, hub, 0.0, 0.4, Color(0.2, 0.2, 0.25), 2.0)
+
+## Horizontal streaks across the screen while a boost burns.
+func _draw_speed_lines() -> void:
+	if boost_fx <= 0.01:
+		return
+	for k in 16:
+		var h := _hash(k + 700)
+		var y := (0.1 + 0.8 * _hash(k + 31)) * _size.y
+		var len := (0.25 + 0.4 * h) * _size.x
+		var x := fmod(_time * (2400.0 + h * 1800.0) + h * 3000.0, _size.x + len * 2.0)
+		x = _size.x + len - x
+		draw_line(Vector2(x, y), Vector2(x + len, y), Color(1, 1, 1, 0.5 * boost_fx * (0.4 + h)), 3.0 + 4.0 * h)
 
 func _draw_bird(sx: float, sy: float, wx: float) -> void:
 	var flap := sin(_time * 14.0 + wx)

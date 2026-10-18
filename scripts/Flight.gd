@@ -25,6 +25,7 @@ const EV_STALL := 4
 const EV_LAND := 5
 const EV_LAUNCH := 6
 const EV_BEST := 7
+const EV_FAN := 8     # just flew into an updraft
 
 # Phases
 const PH_READY := 0   # on top of the ramp, waiting for the launch
@@ -62,6 +63,7 @@ var theta := 0.0          # pitch (rad), + = nose up
 var stall_amount := 0.0   # 0 = flying, 1 = fully stalled
 var cl_now := 0.0
 var in_fan := false
+var _was_in_fan := false
 var boost_left := 0.0
 var charges := 0
 var charges_max := 0
@@ -147,6 +149,7 @@ func reset(levels: Dictionary, seed_value: int = -1) -> void:
 	stall_amount = 0.0
 	cl_now = 0.0
 	in_fan = false
+	_was_in_fan = false
 	boost_left = 0.0
 	charges = Tuning.booster_charges(lv_booster)
 	charges_max = charges
@@ -293,6 +296,9 @@ func _step_air(dt: float, hold: bool) -> void:
 			if dx < Tuning.fan_half_width and up < Tuning.fan_height:
 				in_fan = true
 				ay += Tuning.fan_accel * (1.0 - 0.6 * clampf(up / Tuning.fan_height, 0.0, 1.0))
+	if in_fan and not _was_in_fan:
+		push_event(EV_FAN, x, y)
+	_was_in_fan = in_fan
 	vx += ax * dt
 	vy += ay * dt
 	var sp := sqrt(vx * vx + vy * vy)
@@ -347,11 +353,12 @@ func _touch_things(dt: float) -> void:
 			K_PAD:
 				t_phase[i] = maxf(t_phase[i] - dt, 0.0)
 				if vy < 0.0 and y - BELLY <= Tuning.pad_height and absf(x - tx) < Tuning.pad_half_width + 0.4:
+					var vy_in := vy
 					vy = maxf(-vy * Tuning.pad_restitution, Tuning.pad_min_kick)
 					y = Tuning.pad_height + BELLY
 					t_phase[i] = 0.35
 					pad_bounces += 1
-					push_event(EV_PAD, tx, Tuning.pad_height)
+					push_event(EV_PAD, tx, Tuning.pad_height, roundi(vy - vy_in))
 			K_BIRD:
 				t_x[i] = tx + t_vx[i] * dt
 				t_y[i] = t_y0[i] + sin(clock * 2.6 + t_phase[i]) * 1.1
@@ -361,10 +368,11 @@ func _touch_things(dt: float) -> void:
 				if bx * bx + by * by < rr * rr:
 					t_active[i] = 0
 					thing_count -= 1
+					var sp_in := speed()
 					vx *= Tuning.bird_slow
 					vy *= Tuning.bird_slow
 					bird_hits += 1
-					push_event(EV_BIRD, t_x[i], t_y[i])
+					push_event(EV_BIRD, t_x[i], t_y[i], roundi(sp_in - speed()))
 
 func _touch_down() -> void:
 	y = BELLY
@@ -394,7 +402,7 @@ func boost() -> bool:
 		return false
 	charges -= 1
 	boost_left = Tuning.booster_time
-	push_event(EV_BOOST, x, y)
+	push_event(EV_BOOST, x, y, roundi(thrust * Tuning.booster_time))
 	return true
 
 # ---------------------------------------------------------------------------------------------

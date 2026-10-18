@@ -8,7 +8,8 @@ signal changed
 
 ## Bump when the file layout changes, and teach _migrate() how to read the old one.
 ##   1: scrap, best_distance, runs, total_distance, levels
-const VERSION := 1
+##   2: seen (which things have been explained by a first-time popup)
+const VERSION := 2
 
 var path := "user://save.json"      # (tests point this somewhere else)
 var scrap := 0.0
@@ -16,6 +17,7 @@ var best_distance := 0.0            # meters, the farthest touchdown so far
 var runs := 0
 var total_distance := 0.0
 var levels := {}                    # upgrade id -> level
+var seen := {}                      # thing id -> true once its first-time popup was shown (saved when a run ends)
 
 func _ready() -> void:
 	load_game()
@@ -26,6 +28,7 @@ func _defaults() -> void:
 	runs = 0
 	total_distance = 0.0
 	levels = {}
+	seen = {}
 	for u in Tuning.upgrades:
 		levels[u["id"]] = 0
 
@@ -47,6 +50,10 @@ func _migrate(d: Dictionary) -> Dictionary:
 	var v := int(d.get("version", 0))
 	if v < 1:
 		d["version"] = 1   # v0 -> v1: same fields, just stamped with a version
+		v = 1
+	if v < 2:
+		d["seen"] = {}     # v1 -> v2: nothing explained yet
+		d["version"] = 2
 	return d
 
 func _apply(d: Dictionary) -> void:
@@ -58,10 +65,15 @@ func _apply(d: Dictionary) -> void:
 	if lv is Dictionary:
 		for u in Tuning.upgrades:
 			levels[u["id"]] = clampi(int(lv.get(u["id"], 0)), 0, int(u["max"]))
+	var sn: Variant = d.get("seen", {})
+	if sn is Dictionary:
+		for k in sn:
+			if bool(sn[k]):
+				seen[String(k)] = true
 
 func to_dict() -> Dictionary:
 	return {"version": VERSION, "scrap": scrap, "best_distance": best_distance, "runs": runs,
-			"total_distance": total_distance, "levels": levels.duplicate()}
+			"total_distance": total_distance, "levels": levels.duplicate(), "seen": seen.duplicate()}
 
 func save_game() -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)
@@ -103,6 +115,13 @@ func record_run(distance: float, earned: float) -> bool:
 	total_distance += distance
 	save_game()
 	return best
+
+## True the first time `id` is seen (and remembers it; written to the file when the run ends, never mid-flight).
+func mark_seen(id: String) -> bool:
+	if seen.has(id):
+		return false
+	seen[id] = true
+	return true
 
 func add_scrap(n: float) -> void:
 	scrap = maxf(scrap + n, 0.0)

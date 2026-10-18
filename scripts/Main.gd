@@ -24,6 +24,8 @@ var cam_x := 0.0
 var cam_bottom := 0.0
 var cam_ppm := 28.0
 var _snap_camera := true
+var _kick := 0.0               # camera kick from a boost, 1 -> 0
+var _time := 0.0
 
 # input
 var _touch_hold := PackedByteArray()
@@ -306,6 +308,9 @@ func frame(delta: float, raw_delta: float = 0.0) -> void:
 				flight.stall_amount > 0.0, flight.charges, flight.charges_max, flight.boost_left > 0.0)
 		if flight.phase == Flight.PH_AIR and flight.time_in_air > 4.0:
 			hud.show_hint(false)
+	_time += delta
+	_kick = maxf(_kick - delta * Tuning.boost_kick_decay, 0.0)
+	world.boost_fx = clampf(flight.boost_left / maxf(Tuning.booster_time, 0.01), 0.0, 1.0) if state == STATE_FLIGHT else 0.0
 	_update_camera(maxf(raw_delta, delta))
 	_apply_camera()
 	if DebugFlags.perf_enabled():
@@ -356,9 +361,9 @@ func _update_camera(dt: float) -> void:
 	cam_ppm = lerpf(cam_ppm, tp, 1.0 - exp(-4.0 * dt))
 
 func _apply_camera() -> void:
-	world.cam_x = cam_x
-	world.cam_bottom = cam_bottom
-	world.ppm = cam_ppm
+	world.cam_x = cam_x - _kick * Tuning.boost_kick_m + sin(_time * 70.0) * 0.12 * _kick
+	world.cam_bottom = cam_bottom + cos(_time * 83.0) * 0.1 * _kick
+	world.ppm = cam_ppm * (1.0 + Tuning.boost_kick_zoom * _kick)
 
 # ---------------------------------------------------------------------------------------------
 # Effects from the simulation's events
@@ -375,17 +380,25 @@ func _handle_events() -> void:
 		match flight.ev_kind[k]:
 			Flight.EV_SCRAP:
 				world.burst(WorldView.P_SPARK, ex, ey, 5, 6.0, 0.4, 0.3, Color(1.0, 0.9, 0.4), rng)
-				hud.popup("+%d" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -50), Color(1, 0.9, 0.4))
+				var scrap_text := "SCRAP! +%d" % flight.ev_val[k] if Save.mark_seen("scrap") else "+%d" % flight.ev_val[k]
+				hud.popup(scrap_text, world.to_screen(ex, ey) + Vector2(0, -50), Color(1, 0.9, 0.4))
 			Flight.EV_PAD:
 				world.burst(WorldView.P_RUBBER, ex, ey + 0.5, 8, 7.0, 0.5, 0.4, Color(0.2, 0.2, 0.22), rng)
-				hud.popup("BOUNCE!", world.to_screen(ex, ey) + Vector2(0, -120), Color(1.0, 0.6, 0.2))
+				var pad_text := "BOUNCE! +speed" if Save.mark_seen("pad") else "BOUNCE! +%d m/s" % flight.ev_val[k]
+				hud.popup(pad_text, world.to_screen(ex, ey) + Vector2(0, -160), Color(1.0, 0.6, 0.2))
 				_buzz(25)
 			Flight.EV_BIRD:
 				world.burst(WorldView.P_FEATHER, ex, ey, 9, 7.0, 0.8, 0.5, Color(0.8, 0.75, 0.95), rng)
-				hud.popup("BIRD!", world.to_screen(ex, ey) + Vector2(0, -100), Color(1.0, 0.35, 0.3))
+				var bird_text := "BIRD! -speed" if Save.mark_seen("bird") else "BIRD! -%d m/s" % flight.ev_val[k]
+				hud.popup(bird_text, world.to_screen(ex, ey) + Vector2(0, -100), Color(1.0, 0.35, 0.3))
 				_buzz(60)
+			Flight.EV_FAN:
+				var fan_text := "UPDRAFT! +height" if Save.mark_seen("fan") else "UPDRAFT!"
+				hud.popup(fan_text, world.to_screen(ex, ey) + Vector2(0, -140), Color(0.6, 0.95, 1.0))
 			Flight.EV_BOOST:
-				hud.popup("BOOST!", world.to_screen(ex, ey) + Vector2(0, -140), Color(1.0, 0.8, 0.2))
+				_kick = 1.0
+				hud.popup("BOOST +%d m/s" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -160), Color(1.0, 0.8, 0.2))
+				_buzz(40)
 			Flight.EV_LAND:
 				world.burst(WorldView.P_DUST, ex, 0.3, 10, 6.0, 0.7, 0.6, Color(0.7, 0.6, 0.45), rng)
 				world.burst(WorldView.P_SCRAP, ex, 0.6, 5, 7.0, 0.8, 0.35, Color(0.6, 0.6, 0.62), rng)
@@ -397,4 +410,8 @@ func _handle_events() -> void:
 func _boost_flames() -> void:
 	var c := cos(flight.theta)
 	var s := sin(flight.theta)
-	world.spawn(WorldView.P_FLAME, flight.x - 3.0 * c, flight.y - 3.0 * s, -flight.vx * 0.2 - 3.0 * c, -flight.vy * 0.2 - 3.0 * s, 0.35, 0.7, Color(1.0, 0.6 + rng.randf() * 0.3, 0.1))
+	for k in 3:
+		var jitter := (rng.randf() - 0.5) * 1.2
+		world.spawn(WorldView.P_FLAME, flight.x - (2.6 + k * 0.5) * c - jitter * s, flight.y - (2.6 + k * 0.5) * s + jitter * c,
+				-flight.vx * 0.12 - 4.0 * c, -flight.vy * 0.12 - 4.0 * s, 0.55, 1.0 - k * 0.2,
+				Color(1.0, 0.45 + rng.randf() * 0.45, 0.08))

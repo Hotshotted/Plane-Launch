@@ -23,7 +23,7 @@ var _gauge: Label
 var _stall: Label
 var _hint: Label
 var _boost_panel: PanelContainer
-var _boost_pips: Label
+var _boost_pips: Label       # charges, shown beside the button
 var _boost_style: StyleBoxFlat
 var _pop_labels: Array[Label] = []
 var _pop_born := PackedFloat32Array()
@@ -160,9 +160,15 @@ func _build_flight_hud() -> void:
 	var bl := _label(48)
 	bl.text = "BOOST"
 	bv.add_child(bl)
-	_boost_pips = _label(40)
-	bv.add_child(_boost_pips)
 	_flight_root.add_child(_boost_panel)
+	_boost_pips = _label(52, HORIZONTAL_ALIGNMENT_RIGHT)
+	_boost_pips.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	_boost_pips.offset_left = -640
+	_boost_pips.offset_right = -290
+	_boost_pips.offset_top = -230
+	_boost_pips.offset_bottom = -140
+	_boost_pips.add_theme_color_override("font_color", Color(1.0, 0.8, 0.25))
+	_flight_root.add_child(_boost_pips)
 	for i in POPUPS:
 		var p := _label(56)
 		p.visible = false
@@ -340,6 +346,7 @@ func set_flight(distance: float, scrap_value: int, speed: float, alt: float, sta
 			s += "●" if i < charges else "○"
 		_boost_pips.text = s
 	_boost_panel.visible = charges_max > 0
+	_boost_pips.visible = charges_max > 0
 	_boost_style.bg_color = Color(1.0, 0.85, 0.2) if boosting else (Color(0.95, 0.5, 0.1) if charges > 0 else Color(0.4, 0.38, 0.36))
 
 func show_hint(on: bool) -> void:

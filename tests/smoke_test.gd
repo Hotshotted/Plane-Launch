@@ -204,6 +204,90 @@ func _initialize() -> void:
 	f = run_pilot(lv(), 3)
 	check(f.is_over() and f.scrap_total() == f.scrap_for_distance() + f.picked_value, "a pilot run ends and its scrap adds up")
 
+	print("2b. clarity and boost")
+	f = air(0, 3.0, 18, 0, 0)
+	f.add_thing(FlightS.K_FAN, 4.0, 0.0)
+	var got_fan := false
+	for i in 60:
+		f.step(1.0 / 120.0, false)
+		for k in f.ev_n:
+			if f.ev_kind[k] == FlightS.EV_FAN:
+				got_fan = true
+	check(got_fan, "flying into an updraft raises an event")
+	f = air(0, 1.2, 12, -8, -10)
+	f.add_thing(FlightS.K_PAD, 1.0, 0.0)
+	f.advance(0.1, false)
+	var pad_gain := 0
+	var bird_loss := 0
+	for k in f.ev_n:
+		if f.ev_kind[k] == FlightS.EV_PAD:
+			pad_gain = f.ev_val[k]
+	check(pad_gain > 5, "a bounce reports the speed it gave (+%d m/s)" % pad_gain)
+	f = air(0, 30, 20, 0, 0)
+	f.add_thing(FlightS.K_BIRD, 3.0, 30.0, 0.0)
+	f.advance(0.3, false)
+	for k in f.ev_n:
+		if f.ev_kind[k] == FlightS.EV_BIRD:
+			bird_loss = f.ev_val[k]
+	check(bird_loss > 3, "a bird hit reports the speed it cost (-%d m/s)" % bird_loss)
+	f = air(0, 100, 20, 0, 0, lv(0, 0, 0, 3, 0))
+	f.boost()
+	var boost_val := 0
+	for k in f.ev_n:
+		if f.ev_kind[k] == FlightS.EV_BOOST:
+			boost_val = f.ev_val[k]
+	check(boost_val == roundi(tn.booster_thrust(3) * tn.booster_time) and boost_val > 3, "a boost reports the speed it adds (+%d m/s)" % boost_val)
+	check(tn.upgrade_cost("booster", 0) >= 80.0 and tn.upgrade_cost("booster", 3) > tn.upgrade_cost("ramp", 3) * 1.5, "Booster is the pricey upgrade (%.0f scrap for the first)" % tn.upgrade_cost("booster", 0))
+	sv.reset_all()
+	check(sv.mark_seen("pad") and not sv.mark_seen("pad"), "a first-time popup is announced once")
+	sv.record_run(10.0, 5.0)
+	sv.load_game()
+	check(sv.seen.has("pad") and not sv.mark_seen("pad"), "...and remembered across saves")
+	sv.reset_all()
+	main._to_shop()
+	main.hud._launch_btn.pressed.emit()
+	for i in 20:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+	main.flight.push_event(FlightS.EV_PAD, main.flight.x, 1.0, 9)
+	main._handle_events()
+	var latest: String = main.hud._pop_labels[(main.hud._next_pop + main.hud.POPUPS - 1) % main.hud.POPUPS].text
+	check(latest == "BOUNCE! +speed", "the first bounce names its effect (%s)" % latest)
+	main.flight.push_event(FlightS.EV_PAD, main.flight.x, 1.0, 9)
+	main._handle_events()
+	latest = main.hud._pop_labels[(main.hud._next_pop + main.hud.POPUPS - 1) % main.hud.POPUPS].text
+	check(latest == "BOUNCE! +9 m/s", "later bounces show the number (%s)" % latest)
+	main.flight.push_event(FlightS.EV_FAN, main.flight.x, 5.0)
+	main._handle_events()
+	latest = main.hud._pop_labels[(main.hud._next_pop + main.hud.POPUPS - 1) % main.hud.POPUPS].text
+	check(latest == "UPDRAFT! +height", "the first updraft names its effect (%s)" % latest)
+	main.flight.push_event(FlightS.EV_BIRD, main.flight.x, 5.0, 4)
+	main._handle_events()
+	latest = main.hud._pop_labels[(main.hud._next_pop + main.hud.POPUPS - 1) % main.hud.POPUPS].text
+	check(latest == "BIRD! -speed", "the first bird names its effect (%s)" % latest)
+	fly_main(main)
+	sv.reset_all()
+	sv.levels["booster"] = 3
+	main._to_shop()
+	main.hud._launch_btn.pressed.emit()
+	for i in 90:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+	check(main.hud._boost_pips.visible and main.hud._boost_pips.text == "●●●", "boost charges show as pips beside the button (%s)" % main.hud._boost_pips.text)
+	var rect_b: Rect2 = main.hud.boost_rect()
+	var cam0: float = main.world.cam_x
+	touch(main, rect_b.get_center(), true, 4)
+	touch(main, rect_b.get_center(), false, 4)
+	main.frame(1.0 / 60.0, 1.0 / 60.0)
+	check(main._kick > 0.8 and main.world.boost_fx > 0.5, "a boost kicks the camera and starts the speed lines")
+	check(main.hud._boost_pips.text == "●●○", "a charge is spent (%s)" % main.hud._boost_pips.text)
+	var flames: int = main.world.live_particles()
+	check(flames >= 3, "the flame trail spawns particles (%d)" % flames)
+	for i in 120:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+	check(main._kick == 0.0 and main.world.boost_fx == 0.0, "the kick and speed lines die away")
+	fly_main(main)
+	sv.reset_all()
+	main._to_shop()
+
 	print("3. upgrades and the early game")
 	var base := avg_distance(lv())
 	check(base > 40.0 and base < 150.0, "a level-0 run is short (%.0f m)" % base)

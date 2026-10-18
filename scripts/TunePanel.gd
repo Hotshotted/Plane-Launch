@@ -34,6 +34,8 @@ const ENTRIES := [
 	["booster_accel", "Booster thrust (lvl 1)", 1.0, 40.0, 0.5],
 	["booster_accel_step", "Booster thrust / level", 0.0, 5.0, 0.1],
 	["booster_time", "Booster burst (s)", 0.2, 2.0, 0.05],
+	["boost_kick_m", "Boost camera kick (m)", 0.0, 6.0, 0.1],
+	["boost_kick_zoom", "Boost zoom pulse", 0.0, 0.2, 0.01],
 	["magnet_base", "Magnet reach (lvl 0)", 0.8, 4.0, 0.1],
 	["magnet_step", "Magnet reach / level", 0.0, 3.0, 0.1],
 	["pad_restitution", "Pad rebound", 0.3, 1.2, 0.05],

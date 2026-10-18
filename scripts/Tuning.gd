@@ -21,6 +21,12 @@ var prewarm_stable_frames := 10
 var prewarm_stable_ms := 45.0
 var prewarm_max_seconds := 5.0
 
+# ---------- Boost feel ----------
+## Camera kick when a boost fires: the view is pulled back this many meters and eases home; plus a zoom pulse.
+var boost_kick_m := 1.6
+var boost_kick_zoom := 0.05
+var boost_kick_decay := 3.2
+
 # ---------- Camera / screen ----------
 ## Pixels per meter (the canvas is 1080 px wide, so the screen is about 1080 / view_scale meters wide).
 var view_scale := 34.0
@@ -81,8 +87,8 @@ var wings_lift_step := 0.10
 ## Body: drag0 shrinks by this fraction per level (compounding).
 var body_drag_step := 0.10
 ## Booster: tap fires one burst; level = charges per run. Thrust acceleration along the nose, for burst_time seconds.
-var booster_accel := 3.0
-var booster_accel_step := 0.5
+var booster_accel := 3.45
+var booster_accel_step := 0.575
 var booster_time := 0.8
 ## Scrap Magnet: pickup radius (m) at level 0, and the gain per level. Scrap inside the radius flies to the glider.
 var magnet_base := 1.5
@@ -134,7 +140,7 @@ var upgrades: Array[Dictionary] = [
 	{"id": "ramp", "name": "Ramp", "max": 10, "base_cost": 25.0, "growth": 1.55, "blurb": "launch speed"},
 	{"id": "wings", "name": "Wings", "max": 10, "base_cost": 30.0, "growth": 1.55, "blurb": "lift"},
 	{"id": "body", "name": "Body", "max": 10, "base_cost": 30.0, "growth": 1.55, "blurb": "drag"},
-	{"id": "booster", "name": "Booster", "max": 8, "base_cost": 60.0, "growth": 1.65, "blurb": "boosts per run"},
+	{"id": "booster", "name": "Booster", "max": 8, "base_cost": 84.0, "growth": 1.65, "blurb": "boosts per run"},
 	{"id": "magnet", "name": "Scrap Magnet", "max": 8, "base_cost": 20.0, "growth": 1.45, "blurb": "pickup reach"},
 ]
 
