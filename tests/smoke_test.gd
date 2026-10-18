@@ -228,7 +228,7 @@ func _initialize() -> void:
 	main._to_shop()
 	await process_frame
 	var baseline: Dictionary = {}
-	var scraps: Array[float] = []
+	var scraps_expected := 0.0
 	for run in 3:
 		check(main.state == main.STATE_SHOP, "run %d: starts in the shop" % (run + 1))
 		main.hud._launch_btn.pressed.emit()
@@ -236,8 +236,8 @@ func _initialize() -> void:
 		var secs := fly_main(main)
 		check(main.state == main.STATE_SHOP, "run %d: back in the shop after the touchdown (%.1f s flown)" % [run + 1, secs])
 		check(main.last_result.get("distance", 0.0) > 20.0 and main.hud._result.text.contains("LANDED"), "run %d: the result is shown (%s)" % [run + 1, main.hud._result.text.replace("\n", " | ")])
-		check(sv.runs == run + 1 and sv.scrap > (scraps[-1] if scraps.size() > 0 else 0.0) - 1.0, "run %d: scrap and run count are saved" % (run + 1))
-		scraps.append(sv.scrap)
+		check(sv.runs == run + 1 and sv.scrap >= main.last_result["earned"] and sv.scrap == scraps_expected + main.last_result["earned"], "run %d: scrap and run count are saved (+%d scrap)" % [run + 1, main.last_result["earned"]])
+		scraps_expected = sv.scrap
 		# buy the cheapest thing we can
 		var bought := false
 		for u in tn.upgrades:
@@ -245,6 +245,7 @@ func _initialize() -> void:
 				var before: int = sv.level(u["id"])
 				main.hud._row_btn[tn.upgrades.find(u)].pressed.emit()
 				bought = sv.level(u["id"]) == before + 1
+				scraps_expected = sv.scrap
 				check(bought, "run %d: buying %s raises its level" % [run + 1, u["name"]])
 				check(main.flight.lv_ramp + main.flight.lv_wings + main.flight.lv_body + main.flight.lv_booster + main.flight.lv_magnet == total_levels(), "run %d: the glider on the ramp is rebuilt with the new level" % (run + 1))
 		if run == 0:
