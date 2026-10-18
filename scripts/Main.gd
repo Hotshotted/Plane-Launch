@@ -71,6 +71,29 @@ func _ready() -> void:
 # keep drawing until frame times settle. Everything stays alive for the whole session, so this runs once.
 # ---------------------------------------------------------------------------------------------
 
+var _prewarm_zone_idx := -1
+var prewarm_zones_seen := {}   # zones whose scenery was drawn during the pre-warm
+
+## Pre-warm: show zone `zi`'s scenery with one of every thing, so each zone's shapes are drawn once at boot.
+func _prewarm_zone(zi: int) -> void:
+	_prewarm_zone_idx = zi
+	prewarm_zones_seen[zi] = true
+	flight.clear_things()
+	var x0 := Tuning.zone_start(zi) + (0.0 if zi == 0 else 6.0)
+	cam_x = x0 - 6.0
+	var raise: Array = Zones.list[zi]["raise"]
+	var base := float(raise[1]) * 0.5
+	for i in 6:
+		flight.add_thing(Flight.K_NUT, x0 + i * 3.0, 20.0)
+	flight.add_thing(Flight.K_GEAR, x0 + 16.0, 21.0)
+	flight.add_thing(Flight.K_PAD, x0 + 4.0, base)
+	flight.add_thing(Flight.K_FAN, x0 + 12.0, base)
+	flight.add_thing(Flight.K_BIRD, x0 + 18.0, 12.0)
+	flight.x = x0 + 8.0
+	flight.y = 14.0
+	flight.theta = 0.1
+	_apply_camera()
+
 func _prewarm() -> void:
 	_warming = true
 	hud.show_splash(true)
@@ -86,22 +109,18 @@ func _prewarm() -> void:
 	flight.stall_amount = 1.0
 	world.best_text = "BEST 99 m"
 	world.show_aura = true
-	for i in 6:
-		flight.add_thing(Flight.K_NUT, -6.0 + i * 3.0, 20.0)
-	flight.add_thing(Flight.K_GEAR, 10.0, 21.0)
-	flight.add_thing(Flight.K_PAD, 4.0, 0.0)
-	flight.add_thing(Flight.K_FAN, 9.0, 0.0)
-	flight.add_thing(Flight.K_BIRD, 14.0, 12.0)
-	cam_x = flight.ramp_top.x - 6.0
 	cam_ppm = 20.0
 	cam_bottom = -6.0
-	_apply_camera()
+	_prewarm_zone(0)
 	var t_start := Time.get_ticks_msec()
 	var t_last := t_start
 	var calm := 0
 	var t_refresh := -100000
 	while true:
 		var now := Time.get_ticks_msec()
+		var zi := int((now - t_start) / 110) % Zones.COUNT
+		if zi != _prewarm_zone_idx:
+			_prewarm_zone(zi)
 		if now - t_refresh > 300:
 			t_refresh = now
 			for k in 6:
@@ -109,6 +128,7 @@ func _prewarm() -> void:
 			for k in 4:
 				hud.popup("BOUNCE! +%d" % (10 + k), Vector2(300 + k * 150, 800), Color.WHITE)
 		world.update_particles(0.016)
+		_apply_camera()
 		await get_tree().process_frame
 		var t := Time.get_ticks_msec()
 		calm = calm + 1 if (t - t_last) < Tuning.prewarm_stable_ms else 0
@@ -171,12 +191,14 @@ func launch() -> void:
 	flight.launch()
 
 func _finish_run() -> void:
-	var earned := flight.scrap_total()
+	var claim := Save.claim_zones(flight.zone_max)
+	var earned: int = flight.scrap_total() + int(claim["bonus"])
 	var new_best := Save.record_run(flight.distance, earned)
 	runs_this_session += 1
 	last_result = {
 		"distance": floorf(flight.distance), "earned": earned, "dist_scrap": flight.scrap_for_distance(),
 		"picked": flight.picked_value, "picked_count": flight.picked_count, "new_best": new_best,
+		"zone_bonus": claim["bonus"], "zone": flight.zone_max, "new_zones": claim["new"],
 	}
 	_finish_timer = 0.0
 
@@ -304,6 +326,7 @@ func frame(delta: float, raw_delta: float = 0.0) -> void:
 			if _finish_timer >= FINISH_DELAY:
 				_to_shop()
 	if state == STATE_FLIGHT:
+		hud.set_zone(flight.zone, flight.zone_max, Save.zone_best, flight.distance)
 		hud.set_flight(flight.distance, flight.picked_value, flight.speed(), flight.altitude(),
 				flight.stall_amount > 0.0, flight.charges, flight.charges_max, flight.boost_left > 0.0)
 		if flight.phase == Flight.PH_AIR and flight.time_in_air > 4.0:
@@ -403,6 +426,19 @@ func _handle_events() -> void:
 				world.burst(WorldView.P_DUST, ex, 0.3, 10, 6.0, 0.7, 0.6, Color(0.7, 0.6, 0.45), rng)
 				world.burst(WorldView.P_SCRAP, ex, 0.6, 5, 7.0, 0.8, 0.35, Color(0.6, 0.6, 0.62), rng)
 				_buzz(80)
+			Flight.EV_ZONE:
+				var zn := Tuning.zone_name(flight.ev_val[k])
+				if flight.ev_val[k] > Save.zone_best:
+					hud.banner("NEW ZONE!\n%s\n+%s scrap" % [zn.to_upper(), Tuning.fmt(Tuning.zone_bonus(flight.ev_val[k]))], Color(1.0, 0.9, 0.35))
+					_buzz(70)
+				else:
+					hud.banner(zn.to_upper(), Color(0.8, 0.95, 1.0))
+			Flight.EV_SKIP:
+				var cloud := flight.ev_val[k] == 2
+				world.burst(WorldView.P_SPARK, ex, 0.4, 7, 6.0, 0.5, 0.35, Color(1, 1, 1) if cloud else Color(0.6, 0.85, 1.0), rng)
+				var skip_text := ("BOING!" if cloud else "SKIP!") + (" +bounce" if Save.mark_seen("cloud" if cloud else "water") else "")
+				hud.popup(skip_text, world.to_screen(ex, 1.5) + Vector2(0, -100), Color(1, 1, 1) if cloud else Color(0.5, 0.85, 1.0))
+				_buzz(20)
 			Flight.EV_BEST:
 				hud.popup("NEW BEST!", Vector2(_view_size().x * 0.5, 330.0), Color(1.0, 0.95, 0.4))
 	flight.ev_n = 0

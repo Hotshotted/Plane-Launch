@@ -46,6 +46,11 @@ const ENTRIES := [
 	["w_pad", "Chance: bounce pad", 0.0, 6.0, 0.1],
 	["w_fan", "Chance: fan", 0.0, 6.0, 0.1],
 	["w_bird", "Chance: birds", 0.0, 6.0, 0.1],
+	["zone_distance_mult", "Zone distances x", 0.1, 3.0, 0.05],
+	["zone_bonus_mult", "Zone bonus x", 0.0, 5.0, 0.1],
+	["skip_min_speed", "Water skip: min speed", 2.0, 30.0, 0.5],
+	["skip_max_sink", "Water skip: max sink", 1.0, 20.0, 0.5],
+	["skip_restitution", "Water skip: rebound", 0.1, 1.0, 0.05],
 	["scrap_per_meter", "Scrap per meter", 0.1, 3.0, 0.05],
 	["scrap_nut_value", "Scrap per nut", 1.0, 10.0, 1.0],
 	["scrap_gear_value", "Scrap per gear", 1.0, 40.0, 1.0],
@@ -189,6 +194,13 @@ func build() -> void:
 	save_buttons.add_child(add_scrap)
 	save_buttons.add_child(reset_save)
 	column.add_child(save_buttons)
+	var unlock_row := HBoxContainer.new()
+	unlock_row.add_theme_constant_override("separation", 20)
+	var unlock_zones := _make_button("Unlock all zones", 34)
+	unlock_zones.pressed.connect(func(): Save.zone_best = Zones.COUNT - 1; Save.save_game(); _out.text = "All zones unlocked (no bonus paid).")
+	unlock_zones.set_meta("debug", "unlock_zones")
+	unlock_row.add_child(unlock_zones)
+	column.add_child(unlock_row)
 	_out = _make_label("", 26, HORIZONTAL_ALIGNMENT_LEFT)
 	_out.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_out.custom_minimum_size = Vector2(0, 150)

@@ -26,6 +26,8 @@ const EV_LAND := 5
 const EV_LAUNCH := 6
 const EV_BEST := 7
 const EV_FAN := 8     # just flew into an updraft
+const EV_ZONE := 9    # entered a new zone for the first time this run (val = zone index)
+const EV_SKIP := 10   # bounced off the ground (val = 1 water, 2 cloud)
 
 # Phases
 const PH_READY := 0   # on top of the ramp, waiting for the launch
@@ -44,6 +46,8 @@ var t_y := PackedFloat32Array()
 var t_y0 := PackedFloat32Array()      # birds: the height they bob around
 var t_vx := PackedFloat32Array()
 var t_phase := PackedFloat32Array()   # random phase, or a squash timer (pads)
+var t_zone := PackedInt32Array()      # the zone a thing belongs to (its look)
+var t_scale := PackedFloat32Array()   # birds: size, fans: strength
 var thing_count := 0                  # active things (for ?perf)
 
 # --- events ---
@@ -102,6 +106,10 @@ var bird_hits := 0
 var pad_bounces := 0
 var max_altitude := 0.0
 var max_speed := 0.0
+var zone := 0                  # zone the glider is in
+var zone_max := 0              # farthest zone reached this run
+var skips := 0
+var _gravity := 9.8
 
 var _weights := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0])
 
@@ -113,6 +121,8 @@ func _init() -> void:
 	t_y0.resize(MAX_THINGS)
 	t_vx.resize(MAX_THINGS)
 	t_phase.resize(MAX_THINGS)
+	t_zone.resize(MAX_THINGS)
+	t_scale.resize(MAX_THINGS)
 	ev_kind.resize(MAX_EVENTS)
 	ev_x.resize(MAX_EVENTS)
 	ev_y.resize(MAX_EVENTS)
@@ -164,6 +174,10 @@ func reset(levels: Dictionary, seed_value: int = -1) -> void:
 	pad_bounces = 0
 	max_altitude = 0.0
 	max_speed = 0.0
+	zone = 0
+	zone_max = 0
+	skips = 0
+	_gravity = Tuning.gravity * float(Zones.list[0]["gravity"])
 	vx = 0.0
 	vy = 0.0
 	ramp_len = Tuning.build_ramp(lv_ramp, ramp_pts)
@@ -276,7 +290,7 @@ func _step_air(dt: float, hold: bool) -> void:
 	var nx := -vy / s   # unit vector perpendicular to the velocity, to the left of it: lift direction
 	var ny := vx / s
 	var ax := nx * lift - drag * vx / s
-	var ay := ny * lift - drag * vy / s - Tuning.gravity
+	var ay := ny * lift - drag * vy / s - _gravity
 	if st > 0.0:
 		theta -= deg_to_rad(Tuning.stall_nose_drop) * st * dt
 	# --- booster ---
@@ -292,10 +306,10 @@ func _step_air(dt: float, hold: bool) -> void:
 		var kind := t_kind[i]
 		if kind == K_FAN:
 			var dx := absf(x - t_x[i])
-			var up := y - BELLY
-			if dx < Tuning.fan_half_width and up < Tuning.fan_height:
+			var up := y - BELLY - t_y[i]
+			if dx < Tuning.fan_half_width and up > -0.5 and up < Tuning.fan_height:
 				in_fan = true
-				ay += Tuning.fan_accel * (1.0 - 0.6 * clampf(up / Tuning.fan_height, 0.0, 1.0))
+				ay += Tuning.fan_accel * t_scale[i] * (1.0 - 0.6 * clampf(up / Tuning.fan_height, 0.0, 1.0))
 	if in_fan and not _was_in_fan:
 		push_event(EV_FAN, x, y)
 	_was_in_fan = in_fan
@@ -308,6 +322,13 @@ func _step_air(dt: float, hold: bool) -> void:
 	x += vx * dt
 	y += vy * dt
 	distance = maxf(x, 0.0)
+	var zi := Tuning.zone_index(x)
+	if zi != zone:
+		zone = zi
+		_gravity = Tuning.gravity * float(Zones.list[zi]["gravity"])
+		if zi > zone_max:
+			zone_max = zi
+			push_event(EV_ZONE, x, y, zi)
 	max_altitude = maxf(max_altitude, y - BELLY)
 	max_speed = maxf(max_speed, sp)
 	_touch_things(dt)
@@ -317,9 +338,9 @@ func _step_air(dt: float, hold: bool) -> void:
 	# --- keep the world filled ahead, and drop what is behind ---
 	while gen_x < x + 70.0:
 		_gen_chunk()
-	# --- touchdown ---
-	if y - BELLY <= 0.0:
-		_touch_down()
+	# --- the ground: dirt ends the run, water skips, clouds bounce ---
+	if y - BELLY <= 0.0 or clock > Tuning.max_flight_seconds:
+		_ground_contact()
 
 func _touch_things(dt: float) -> void:
 	var mag := magnet_r
@@ -352,19 +373,20 @@ func _touch_things(dt: float) -> void:
 					t_y[i] = t_y[i] + dy / d * minf(pull, d)
 			K_PAD:
 				t_phase[i] = maxf(t_phase[i] - dt, 0.0)
-				if vy < 0.0 and y - BELLY <= Tuning.pad_height and absf(x - tx) < Tuning.pad_half_width + 0.4:
+				var base := t_y[i]
+				if vy < 0.0 and y - BELLY <= base + Tuning.pad_height and y - BELLY >= base - 0.6 and absf(x - tx) < Tuning.pad_half_width + 0.4:
 					var vy_in := vy
 					vy = maxf(-vy * Tuning.pad_restitution, Tuning.pad_min_kick)
-					y = Tuning.pad_height + BELLY
+					y = base + Tuning.pad_height + BELLY
 					t_phase[i] = 0.35
 					pad_bounces += 1
-					push_event(EV_PAD, tx, Tuning.pad_height, roundi(vy - vy_in))
+					push_event(EV_PAD, tx, base + Tuning.pad_height, roundi(vy - vy_in))
 			K_BIRD:
 				t_x[i] = tx + t_vx[i] * dt
 				t_y[i] = t_y0[i] + sin(clock * 2.6 + t_phase[i]) * 1.1
 				var bx := x - t_x[i]
 				var by := y - t_y[i]
-				var rr := Tuning.bird_radius + 0.8
+				var rr := Tuning.bird_radius * t_scale[i] + 0.8
 				if bx * bx + by * by < rr * rr:
 					t_active[i] = 0
 					thing_count -= 1
@@ -373,6 +395,27 @@ func _touch_things(dt: float) -> void:
 					vy *= Tuning.bird_slow
 					bird_hits += 1
 					push_event(EV_BIRD, t_x[i], t_y[i], roundi(sp_in - speed()))
+
+func _ground_contact() -> void:
+	var zd: Dictionary = Zones.list[zone]
+	var kind := int(zd["ground"])
+	var sp := speed()
+	if clock <= Tuning.max_flight_seconds:
+		if kind == 1 and sp >= Tuning.skip_min_speed and vy >= -Tuning.skip_max_sink:
+			vy = maxf(-vy * Tuning.skip_restitution, Tuning.skip_min_kick)
+			vx *= Tuning.skip_speed_kept
+			y = BELLY + 0.02
+			skips += 1
+			push_event(EV_SKIP, x, 0.0, 1)
+			return
+		var bounce := float(zd["bounce"])
+		if bounce > 0.0 and vy < -2.0:
+			vy = -vy * bounce
+			y = BELLY + 0.02
+			skips += 1
+			push_event(EV_SKIP, x, 0.0, 2)
+			return
+	_touch_down()
 
 func _touch_down() -> void:
 	y = BELLY
@@ -433,6 +476,8 @@ func scrap_total() -> int:
 # ---------------------------------------------------------------------------------------------
 
 func add_thing(kind: int, tx: float, ty: float, tvx: float = 0.0) -> void:
+	var zi := Tuning.zone_index(tx)
+	var zd: Dictionary = Zones.list[zi]
 	for i in MAX_THINGS:
 		if t_active[i] == 0:
 			t_active[i] = 1
@@ -442,19 +487,24 @@ func add_thing(kind: int, tx: float, ty: float, tvx: float = 0.0) -> void:
 			t_y0[i] = ty
 			t_vx[i] = tvx
 			t_phase[i] = rng.randf() * TAU if kind == K_BIRD else 0.0
+			t_zone[i] = zi
+			t_scale[i] = float(zd["bird_scale"]) if kind == K_BIRD else (float(zd["fan_mult"]) if kind == K_FAN else 1.0)
 			thing_count += 1
 			return
 
 func _gen_chunk() -> void:
 	var cx := gen_x
 	var d := clampf(cx / 1000.0, 0.0, 1.0)
-	_weights[0] = Tuning.w_arc
-	_weights[1] = Tuning.w_line
-	_weights[2] = Tuning.w_pad
-	_weights[3] = Tuning.w_fan
-	_weights[4] = Tuning.w_bird + Tuning.bird_weight_per_km * (cx / 1000.0)
-	_weights[5] = Tuning.w_gear
-	_weights[6] = Tuning.w_low
+	var zd: Dictionary = Zones.list[Tuning.zone_index(cx)]
+	var zw: Array = zd["weights"]
+	var raise: Array = zd["raise"]
+	_weights[0] = Tuning.w_arc * zw[0]
+	_weights[1] = Tuning.w_line * zw[1]
+	_weights[2] = Tuning.w_pad * zw[2]
+	_weights[3] = Tuning.w_fan * zw[3]
+	_weights[4] = (Tuning.w_bird + Tuning.bird_weight_per_km * (cx / 1000.0)) * zw[4]
+	_weights[5] = Tuning.w_gear * zw[5]
+	_weights[6] = Tuning.w_low * zw[6]
 	var total := 0.0
 	for w in _weights:
 		total += w
@@ -465,6 +515,9 @@ func _gen_chunk() -> void:
 		if pick <= 0.0:
 			which = i
 			break
+	var base := 0.0
+	if float(raise[1]) > 0.0:
+		base = rng.randf_range(float(raise[0]), float(raise[1]))
 	match which:
 		0:   # an arc of nuts
 			var apex := rng.randf_range(5.0, 18.0 + 18.0 * d)
@@ -475,17 +528,17 @@ func _gen_chunk() -> void:
 			var ly := rng.randf_range(3.0, 28.0)
 			for i in 5:
 				add_thing(K_NUT, cx + 3.0 + i * 2.2, ly)
-		2:   # a bounce pad with nuts along the arc it throws you on
+		2:   # a bounce pad (on a rooftop in the Town and City) with nuts along the arc it throws you on
 			var px := cx + rng.randf_range(4.0, 10.0)
-			add_thing(K_PAD, px, 0.0)
+			add_thing(K_PAD, px, base)
 			for i in 4:
 				var t := i / 3.0
-				add_thing(K_NUT, px + 4.0 + t * 8.0, 7.0 + 4.0 * sin(PI * t))
-		3:   # an updraft fan with nuts up its column
+				add_thing(K_NUT, px + 4.0 + t * 8.0, base + 7.0 + 4.0 * sin(PI * t))
+		3:   # an updraft (fan, windmill, heat vent, geyser) with nuts up its column
 			var fx := cx + rng.randf_range(4.0, 10.0)
-			add_thing(K_FAN, fx, 0.0)
+			add_thing(K_FAN, fx, base)
 			for i in 4:
-				add_thing(K_NUT, fx, 4.0 + i * 3.5)
+				add_thing(K_NUT, fx, base + 4.0 + i * 3.5)
 		4:   # birds, sometimes guarding a gear
 			var n := 1 + (1 if rng.randf() < 0.4 else 0) + (1 if d > 0.4 and rng.randf() < 0.4 else 0)
 			for i in n:
@@ -498,7 +551,7 @@ func _gen_chunk() -> void:
 			add_thing(K_GEAR, cx + 8.0, gy)
 			add_thing(K_NUT, cx + 5.0, gy - 1.5)
 			add_thing(K_NUT, cx + 11.0, gy - 1.5)
-		6:   # nuts skimming the ground
+		6:   # nuts skimming the ground (or the water: skim for them)
 			for i in 6:
 				add_thing(K_NUT, cx + 3.0 + i * 2.0, 1.6)
 	gen_x += rng.randf_range(Tuning.chunk_len_min, Tuning.chunk_len_max)

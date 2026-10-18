@@ -74,6 +74,7 @@ var _ramp_fill := PackedVector2Array()
 var _ramp_top_line := PackedVector2Array()
 var _ramp_bot_line := PackedVector2Array()
 var _zig := PackedVector2Array()
+var _pal: Array[Color] = []     # palette in effect at the middle of the screen (sky): blended across zone borders
 var _sign_text: Array[String] = []
 
 # particle pool
@@ -107,6 +108,8 @@ func _ready() -> void:
 	_ramp_top_line.resize(rn)
 	_ramp_bot_line.resize(rn)
 	_zig.resize(9)
+	for i in 10:
+		_pal.append(Color.WHITE)
 	for p in [_px, _py, _pvx, _pvy, _plife, _pmax, _psize]:
 		p.resize(PARTICLES)
 	_pkind.resize(PARTICLES)
@@ -198,8 +201,8 @@ func _poly_sq(tpl: PackedVector2Array, o: Vector2, rot: float, size_m: float, co
 	_poly(tpl, o, rot, Vector2(size_m, size_m) * _ppm, col, lw)
 
 ## A rectangle centred at pixel (cx, cy), w x h pixels.
-func _rect_m(cx: float, cy: float, w: float, h: float, col: Color, rot: float = 0.0) -> void:
-	_poly(RECT, Vector2(cx, cy), rot, Vector2(w, h), col)
+func _rect_m(cx: float, cy: float, w: float, h: float, col: Color, rot: float = 0.0, lw: float = OUTLINE) -> void:
+	_poly(RECT, Vector2(cx, cy), rot, Vector2(w, h), col, lw)
 
 func _hash(i: int) -> float:
 	var v := sin(float(i) * 12.9898 + 78.233) * 43758.5453
@@ -218,6 +221,7 @@ func _draw() -> void:
 	_ppm = ppm
 	_size = get_viewport_rect().size
 	_ground_sy = _size.y + cam_bottom * _ppm
+	_update_palette()
 	_draw_sky()
 	_draw_clouds()
 	_draw_hills()
@@ -231,26 +235,64 @@ func _draw() -> void:
 	_draw_particles()
 	_draw_speed_lines()
 
+## Zone index of the world point drawn at screen x.
+func _zone_at_screen(sx: float) -> int:
+	return Tuning.zone_index(cam_x + sx / _ppm)
+
+func _zp(z: int, k: int) -> Color:
+	return Zones.list[z]["pal"][k]
+
+## The sky palette follows the middle of the screen and fades from the previous zone's over 80 m.
+func _update_palette() -> void:
+	var cx := cam_x + _size.x * 0.5 / _ppm
+	var z := Tuning.zone_index(cx)
+	var t := 1.0
+	var zp := maxi(z - 1, 0)
+	if z > 0:
+		t = clampf((cx - Tuning.zone_start(z)) / 80.0, 0.0, 1.0)
+	for i in 10:
+		_pal[i] = _zp(zp, i).lerp(_zp(z, i), t)
+	if Zones.list[z]["id"] == "disco":
+		_pal[1] = Color.from_hsv(fmod(_time * 0.15, 1.0), 0.6, 0.6)
+		_pal[2] = Color.from_hsv(fmod(_time * 0.15 + 0.3, 1.0), 0.5, 0.9)
+
 func _draw_sky() -> void:
 	var h := _size.y
-	draw_rect(Rect2(0, 0, _size.x, h), SKY_MID)
-	# three flat bands stepping from deep to pale blue toward the horizon (low-poly look)
+	draw_rect(Rect2(0, 0, _size.x, h), _pal[1])
+	# three flat bands stepping from deep to pale toward the horizon (low-poly look)
 	var top_h := clampf(_ground_sy * 0.45, 0.0, h)
-	draw_rect(Rect2(0, 0, _size.x, top_h), SKY_TOP)
+	draw_rect(Rect2(0, 0, _size.x, top_h), _pal[0])
 	var low_y := clampf(_ground_sy - 9.0 * _ppm, 0.0, h)
-	draw_rect(Rect2(0, low_y, _size.x, h - low_y), SKY_LOW)
+	draw_rect(Rect2(0, low_y, _size.x, h - low_y), _pal[2])
+	if _pal[0].v < 0.35:   # a dark sky (the moon): stars
+		for k in 40:
+			var sx := _hash(k + 5) * _size.x
+			var sy := _hash(k + 55) * _ground_sy * 0.8
+			var tw := 0.5 + 0.5 * sin(_time * 2.0 + k)
+			draw_rect(Rect2(sx, sy, 4, 4), Color(1, 1, 1, 0.4 + 0.5 * tw))
 
 func _draw_clouds() -> void:
 	var par := 0.10
 	var w := 17.0
 	var base := cam_x * par
 	var first := int(floorf(base / w)) - 1
+	var cc := Color(1, 1, 1).lerp(_pal[2], 0.25)
 	for i in range(first, first + int(_size.x / (w * _ppm)) + 4):
 		var h := _hash(i + 900)
 		var wx := i * w + h * 8.0
 		var wy := 22.0 + _hash(i + 77) * 26.0
 		var o := Vector2((wx - base) * _ppm, _ground_sy - wy * _ppm * 0.55 - 120.0)
-		_poly(CLOUD, o, 0.0, Vector2(1.0 + h * 0.8, 1.0 + h * 0.5) * _ppm * 1.4, Color(1, 1, 1), 2.0)
+		_poly(CLOUD, o, 0.0, Vector2(1.0 + h * 0.8, 1.0 + h * 0.5) * _ppm * 1.4, cc, 2.0)
+
+# ---- small pixel-space shape helpers (bottom-centre anchored) ----
+func _box(bx: float, by: float, w: float, h: float, col: Color, lw: float = 2.0) -> void:
+	_poly(RECT, Vector2(bx, by - h * 0.5), 0.0, Vector2(w, h), col, lw)
+
+func _tri_up(bx: float, by: float, w: float, h: float, col: Color, lw: float = 2.0) -> void:
+	_poly(TRI, Vector2(bx, by - h * 0.5), 0.0, Vector2(w, h), col, lw)
+
+func _ball(cx: float, cy: float, r: float, col: Color, lw: float = 2.0) -> void:
+	_poly(OCT, Vector2(cx, cy), 0.0, Vector2(r, r), col, lw)
 
 func _draw_hills() -> void:
 	var par := 0.22
@@ -260,9 +302,26 @@ func _draw_hills() -> void:
 	for i in range(first, first + int(_size.x / (w * _ppm)) + 4):
 		var h := _hash(i + 300)
 		var cx := (i * w - base) * _ppm
-		var ph := (5.0 + h * 8.0) * _ppm * 0.9
-		var hw := (w * 0.75) * _ppm
-		_poly(TRI, Vector2(cx, _ground_sy - ph * 0.5), 0.0, Vector2(hw * 2.0, ph), HILL_FAR if h < 0.5 else HILL_NEAR, 2.0)
+		var z := _zone_at_screen(cx)
+		var zd: Dictionary = Zones.list[z]
+		var c3 := _zp(z, 3)
+		var c4 := _zp(z, 4)
+		var gy := _ground_sy
+		match int(zd["far"]):
+			0:   # mountains
+				var ph := (5.0 + h * 8.0) * _ppm * 0.9
+				_tri_up(cx, gy, w * 1.5 * _ppm, ph, c3 if h < 0.5 else c4)
+			1:   # skyline
+				for k in 3:
+					var bw := (2.4 + _hash(i * 3 + k) * 1.6) * _ppm
+					var bh := (6.0 + _hash(i * 7 + k) * 12.0) * _ppm
+					var bx := cx + (k - 1) * 4.4 * _ppm
+					_box(bx, gy, bw, bh, c3 if k % 2 == 0 else c4)
+					for wy in 4:
+						draw_rect(Rect2(bx - bw * 0.3, gy - bh + (0.8 + wy * 1.6) * _ppm, bw * 0.25, 0.7 * _ppm), Color(1, 1, 0.7, 0.5))
+						draw_rect(Rect2(bx + bw * 0.05, gy - bh + (0.8 + wy * 1.6) * _ppm, bw * 0.25, 0.7 * _ppm), Color(1, 1, 0.7, 0.5))
+			2:   # cloud bumps
+				_poly(CLOUD, Vector2(cx, gy - 2.0 * _ppm), 0.0, Vector2(2.4 + h, 1.8 + h) * _ppm * 1.4, c3, 2.0)
 
 func _draw_piles() -> void:
 	var par := 0.5
@@ -272,29 +331,123 @@ func _draw_piles() -> void:
 	for i in range(first, first + int(_size.x / (w * _ppm)) + 4):
 		var h := _hash(i + 500)
 		var cx := (i * w + h * 4.0 - base) * _ppm
-		var ph := (2.0 + h * 3.5) * _ppm
-		var hw := (3.0 + h * 2.0) * _ppm
-		_poly(TRI, Vector2(cx, _ground_sy - ph * 0.5), 0.0, Vector2(hw * 2.0, ph), PILE if h < 0.5 else PILE_DARK, 2.0)
-		# a car roof / crate poking out of the pile
-		_poly_sq(RECT, Vector2(cx + hw * 0.2, _ground_sy - ph * 0.8), 0.2 * (h - 0.5), 1.1, Color(0.62, 0.32, 0.26) if h > 0.3 else Color(0.35, 0.45, 0.52))
+		var z := _zone_at_screen(cx)
+		var c5 := _zp(z, 5)
+		var c6 := _zp(z, 6)
+		var gy := _ground_sy
+		var u := _ppm
+		match int(Zones.list[z]["mid"]):
+			0:   # junk piles with a roof or crate poking out
+				var ph := (2.0 + h * 3.5) * u
+				var hw := (3.0 + h * 2.0) * u
+				_tri_up(cx, gy, hw * 2.0, ph, c5 if h < 0.5 else c6)
+				_poly_sq(RECT, Vector2(cx + hw * 0.2, gy - ph * 0.8), 0.2 * (h - 0.5), 1.1, Color(0.62, 0.32, 0.26) if h > 0.3 else Color(0.35, 0.45, 0.52))
+			1:   # barn and silo
+				_box(cx, gy, 5.0 * u, 3.4 * u, c5)
+				_tri_up(cx, gy - 3.4 * u, 5.6 * u, 2.0 * u, c6)
+				_box(cx + 4.0 * u, gy, 1.6 * u, 5.5 * u, Color(0.8, 0.8, 0.82))
+				_ball(cx + 4.0 * u, gy - 5.6 * u, 0.8 * u, Color(0.6, 0.6, 0.65))
+			2:   # houses
+				_box(cx, gy, 3.6 * u, 2.6 * u, Color(0.92, 0.85, 0.7))
+				_tri_up(cx, gy - 2.6 * u, 4.2 * u, 1.8 * u, c5)
+				draw_rect(Rect2(cx - 0.4 * u, gy - 1.5 * u, 0.8 * u, 0.9 * u), Color(0.5, 0.7, 0.9))
+			3:   # trees
+				_box(cx, gy, 0.5 * u, 2.2 * u, Color(0.45, 0.3, 0.18))
+				_ball(cx, gy - 3.2 * u, 1.9 * u, c5)
+				_ball(cx + 1.1 * u, gy - 2.6 * u, 1.3 * u, c6)
+			4:   # pines
+				_box(cx, gy, 0.5 * u, 1.2 * u, Color(0.4, 0.28, 0.18))
+				_tri_up(cx, gy - 0.8 * u, 3.0 * u, 2.6 * u, c5)
+				_tri_up(cx, gy - 2.4 * u, 2.4 * u, 2.4 * u, c6)
+				_tri_up(cx, gy - 4.0 * u, 1.8 * u, 2.0 * u, c5)
+			5:   # skyscrapers
+				var bh := (7.0 + h * 9.0) * u
+				_box(cx, gy, 3.4 * u, bh, c5)
+				_box(cx + 2.4 * u, gy, 2.4 * u, bh * 0.65, c6)
+				for wy in 5:
+					draw_rect(Rect2(cx - 1.2 * u, gy - bh + (0.8 + wy * 1.5) * u, 0.7 * u, 0.7 * u), Color(1, 0.95, 0.6, 0.65))
+					draw_rect(Rect2(cx + 0.2 * u, gy - bh + (0.8 + wy * 1.5) * u, 0.7 * u, 0.7 * u), Color(1, 0.95, 0.6, 0.65))
+			6:   # palms and a beach hut
+				draw_line(Vector2(cx, gy), Vector2(cx + 0.6 * u, gy - 4.2 * u), BLACK, 9.0)
+				draw_line(Vector2(cx, gy), Vector2(cx + 0.6 * u, gy - 4.2 * u), Color(0.6, 0.45, 0.28), 5.0)
+				for lf in 4:
+					_poly(TRI, Vector2(cx + 0.6 * u + (lf - 1.5) * 0.9 * u, gy - 4.5 * u), (lf - 1.5) * 0.7, Vector2(0.9, 2.4) * u, c5, 2.0)
+			7:   # cloud towers
+				_poly(CLOUD, Vector2(cx, gy - 1.6 * u), 0.0, Vector2(2.0 + h, 1.6) * u, c5, 2.0)
+				_poly(CLOUD, Vector2(cx + 1.0 * u, gy - 3.6 * u), 0.0, Vector2(1.4, 1.2) * u, c6, 2.0)
+			8:   # volcanoes / moon mountains
+				_tri_up(cx, gy, 6.0 * u, (3.0 + h * 3.0) * u, c5)
+				_tri_up(cx, gy - (3.0 + h * 3.0) * u + 0.1 * u, 1.6 * u, 0.9 * u, Color(1.0, 0.45, 0.1) if int(Zones.list[z]["props"]) == 9 else c6)
 
+## The ground: one band per zone (dirt, water with waves, cloud puffs, cheese, disco floor).
 func _draw_ground() -> void:
 	var gy := _ground_sy
 	if gy > _size.y + 4.0:
 		return
-	draw_rect(Rect2(-4, gy, _size.x + 8, _size.y - gy + 8), DIRT)
-	draw_rect(Rect2(-4, gy, _size.x + 8, 1.2 * _ppm), DIRT_TOP)
-	draw_line(Vector2(-4, gy), Vector2(_size.x + 4, gy), BLACK, 4.0)
-	# a few dark stones in the dirt so the ground is not a blank band
-	var first := int(floorf(cam_x / 5.0)) - 1
-	for i in range(first, first + int(_size.x / (5.0 * _ppm)) + 3):
-		var h := _hash(i + 40)
-		var o := Vector2((i * 5.0 + h * 3.0 - cam_x) * _ppm, gy + (1.8 + h * 3.0) * _ppm)
-		_poly_sq(DIAMOND, o, h * 3.0, 0.9 + h, Color(0.33, 0.25, 0.19))
+	var left := cam_x
+	var right := cam_x + _size.x / _ppm
+	for z in Zones.COUNT:
+		var z0 := Tuning.zone_start(z)
+		var z1 := Tuning.zone_start(z + 1) if z + 1 < Zones.COUNT else 1.0e9
+		if z1 < left or z0 > right:
+			continue
+		var xa := maxf((z0 - cam_x) * _ppm, -4.0)
+		var xb := minf((z1 - cam_x) * _ppm, _size.x + 4.0)
+		var w := xb - xa
+		var zd: Dictionary = Zones.list[z]
+		var dirt := _zp(z, 7)
+		var top := _zp(z, 8)
+		match int(zd["ground"]):
+			1:   # water: you can skim it
+				var water := _zp(z, 9)
+				draw_rect(Rect2(xa, gy, w, _size.y - gy + 8), water.darkened(0.25))
+				draw_rect(Rect2(xa, gy, w, 3.0 * _ppm), water)
+				var x := xa
+				while x < xb:
+					var wy := gy + 0.9 * _ppm + sin(x * 0.02 + _time * 2.0) * 5.0
+					draw_line(Vector2(x, wy), Vector2(minf(x + 70.0, xb), wy), Color(1, 1, 1, 0.45), 4.0)
+					x += 140.0
+				draw_line(Vector2(xa, gy), Vector2(xb, gy), BLACK, 4.0)
+			2:   # clouds: soft, bouncy
+				draw_rect(Rect2(xa, gy, w, _size.y - gy + 8), top.darkened(0.12))
+				var x := xa - fmod(cam_x * _ppm, 3.0 * _ppm)
+				while x < xb + 3.0 * _ppm:
+					if x > xa - 3.0 * _ppm:
+						_poly(OCT, Vector2(x, gy + 0.2 * _ppm), 0.0, Vector2(1.7, 1.3) * _ppm, top, 2.5)
+					x += 3.0 * _ppm
+			3:   # cheese with holes
+				draw_rect(Rect2(xa, gy, w, _size.y - gy + 8), dirt)
+				draw_rect(Rect2(xa, gy, w, 1.2 * _ppm), top)
+				draw_line(Vector2(xa, gy), Vector2(xb, gy), BLACK, 4.0)
+				var hole0 := int(floorf((cam_x + xa / _ppm) / 6.0)) - 1
+				for hh in range(hole0, hole0 + int(w / (6.0 * _ppm)) + 3):
+					var hx := (hh * 6.0 + _hash(hh + 9) * 3.0 - cam_x) * _ppm
+					if hx > xa and hx < xb:
+						_ball(hx, gy + (2.0 + _hash(hh + 4) * 3.0) * _ppm, (0.6 + _hash(hh) * 0.8) * _ppm, dirt.darkened(0.3), 2.0)
+			4:   # disco floor: coloured tiles that pulse
+				draw_rect(Rect2(xa, gy, w, _size.y - gy + 8), dirt)
+				var t0 := int(floorf((cam_x + xa / _ppm) / 3.0)) - 1
+				for tt in range(t0, t0 + int(w / (3.0 * _ppm)) + 3):
+					var tx := (tt * 3.0 - cam_x) * _ppm
+					var hue := fmod(tt * 0.13 + _time * 0.6, 1.0)
+					draw_rect(Rect2(tx, gy, 3.0 * _ppm - 3.0, 1.4 * _ppm), Color.from_hsv(hue, 0.7, 0.9))
+				draw_line(Vector2(xa, gy), Vector2(xb, gy), BLACK, 4.0)
+			_:   # dirt
+				draw_rect(Rect2(xa, gy, w, _size.y - gy + 8), dirt)
+				draw_rect(Rect2(xa, gy, w, 1.2 * _ppm), top)
+				draw_line(Vector2(xa, gy), Vector2(xb, gy), BLACK, 4.0)
+				var st0 := int(floorf((cam_x + xa / _ppm) / 5.0)) - 1
+				for k in range(st0, st0 + int(w / (5.0 * _ppm)) + 3):
+					var sh := _hash(k + 40)
+					var o := Vector2((k * 5.0 + sh * 3.0 - cam_x) * _ppm, gy + (1.8 + sh * 3.0) * _ppm)
+					if o.x > xa and o.x < xb:
+						_poly_sq(DIAMOND, o, sh * 3.0, 0.9 + sh, dirt.darkened(0.22))
 
+## Things standing on the ground near the player: by zone, three or four kinds each.
 func _draw_props() -> void:
 	var w := 7.0
 	var first := int(floorf((cam_x - 4.0) / w))
+	var u := _ppm
 	for i in range(first, first + int(_size.x / (w * _ppm)) + 3):
 		var wx := i * w + 2.0
 		if wx > -42.0 and wx < 8.0:
@@ -303,22 +456,121 @@ func _draw_props() -> void:
 		if h > 0.62:
 			continue
 		var o := Vector2(_sx(wx), _ground_sy)
+		var z := _zone_at_screen(o.x)
 		var kind := int(h * 100.0) % 4
-		match kind:
-			0:   # crate
-				_rect_m(o.x, o.y - 0.7 * _ppm, 1.4 * _ppm, 1.4 * _ppm, Color(0.66, 0.5, 0.28))
-				draw_line(o + Vector2(-0.7, -1.4) * _ppm, o + Vector2(0.7, 0.0) * _ppm, BLACK, 2.0)
-			1:   # barrel
-				_rect_m(o.x, o.y - 0.8 * _ppm, 1.1 * _ppm, 1.6 * _ppm, Color(0.7, 0.28, 0.22))
-				draw_line(o + Vector2(-0.55, -1.2) * _ppm, o + Vector2(0.55, -1.2) * _ppm, BLACK, 2.0)
-			2:   # tyre stack
-				_poly(OCT, o + Vector2(0, -0.45 * _ppm), 0.0, Vector2(1.1, 0.45) * _ppm, Color(0.2, 0.2, 0.22))
-				_poly(OCT, o + Vector2(0, -1.3 * _ppm), 0.0, Vector2(0.95, 0.42) * _ppm, Color(0.24, 0.24, 0.26))
-			3:   # car hulk
-				_rect_m(o.x, o.y - 0.7 * _ppm, 4.0 * _ppm, 1.0 * _ppm, Color(0.45, 0.5, 0.58))
-				_rect_m(o.x - 0.2 * _ppm, o.y - 1.55 * _ppm, 2.0 * _ppm, 0.8 * _ppm, Color(0.55, 0.6, 0.66))
-				_poly(OCT, o + Vector2(-1.3, -0.25) * _ppm, 0.0, Vector2(0.42, 0.42) * _ppm, Color(0.15, 0.15, 0.15))
-				_poly(OCT, o + Vector2(1.3, -0.25) * _ppm, 0.0, Vector2(0.42, 0.42) * _ppm, Color(0.15, 0.15, 0.15))
+		var water := int(Zones.list[z]["ground"]) == 1
+		match int(Zones.list[z]["props"]):
+			0:   # junk
+				match kind:
+					0:
+						_rect_m(o.x, o.y - 0.7 * u, 1.4 * u, 1.4 * u, Color(0.66, 0.5, 0.28))
+						draw_line(o + Vector2(-0.7, -1.4) * u, o + Vector2(0.7, 0.0) * u, BLACK, 2.0)
+					1:
+						_rect_m(o.x, o.y - 0.8 * u, 1.1 * u, 1.6 * u, Color(0.7, 0.28, 0.22))
+						draw_line(o + Vector2(-0.55, -1.2) * u, o + Vector2(0.55, -1.2) * u, BLACK, 2.0)
+					2:
+						_poly(OCT, o + Vector2(0, -0.45 * u), 0.0, Vector2(1.1, 0.45) * u, Color(0.2, 0.2, 0.22))
+						_poly(OCT, o + Vector2(0, -1.3 * u), 0.0, Vector2(0.95, 0.42) * u, Color(0.24, 0.24, 0.26))
+					3:
+						_rect_m(o.x, o.y - 0.7 * u, 4.0 * u, 1.0 * u, Color(0.45, 0.5, 0.58))
+						_rect_m(o.x - 0.2 * u, o.y - 1.55 * u, 2.0 * u, 0.8 * u, Color(0.55, 0.6, 0.66))
+						_poly(OCT, o + Vector2(-1.3, -0.25) * u, 0.0, Vector2(0.42, 0.42) * u, Color(0.15, 0.15, 0.15))
+						_poly(OCT, o + Vector2(1.3, -0.25) * u, 0.0, Vector2(0.42, 0.42) * u, Color(0.15, 0.15, 0.15))
+			1:   # farm
+				match kind:
+					0, 1:   # hay bales
+						_box(o.x, o.y, 1.6 * u, 1.3 * u, Color(0.92, 0.8, 0.35))
+						draw_line(o + Vector2(-0.8, -0.65) * u, o + Vector2(0.8, -0.65) * u, BLACK, 2.0)
+					2:   # fence
+						for k in 3:
+							_box(o.x + (k - 1) * 0.9 * u, o.y, 0.22 * u, 1.3 * u, Color(0.8, 0.7, 0.55), 1.5)
+						draw_line(o + Vector2(-1.2, -0.9) * u, o + Vector2(1.2, -0.9) * u, BLACK, 3.0)
+					3:   # scarecrow
+						_box(o.x, o.y, 0.2 * u, 2.2 * u, Color(0.5, 0.35, 0.2), 1.5)
+						draw_line(o + Vector2(-0.9, -1.6) * u, o + Vector2(0.9, -1.6) * u, BLACK, 5.0)
+						_ball(o.x, o.y - 2.4 * u, 0.4 * u, Color(0.9, 0.75, 0.4))
+			2:   # reeds and stones by the river
+				var by := o.y - (0.0 if not water else 0.0)
+				for k in 4:
+					var rx := o.x + (k - 1.5) * 0.35 * u
+					draw_line(Vector2(rx, by), Vector2(rx + sin(_time * 2.0 + k + h * 9.0) * 4.0, by - (1.6 + k * 0.25) * u), BLACK, 6.0)
+					draw_line(Vector2(rx, by), Vector2(rx + sin(_time * 2.0 + k + h * 9.0) * 4.0, by - (1.6 + k * 0.25) * u), Color(0.4, 0.62, 0.25), 3.0)
+				if kind == 0:
+					_poly(OCT, o + Vector2(1.6, -0.3) * u, 0.0, Vector2(0.9, 0.5) * u, Color(0.55, 0.55, 0.58))
+			3:   # town
+				match kind:
+					0, 1:   # small house
+						_box(o.x, o.y, 3.0 * u, 2.2 * u, Color(0.95, 0.88, 0.72))
+						_tri_up(o.x, o.y - 2.2 * u, 3.5 * u, 1.4 * u, Color(0.75, 0.35, 0.3))
+						draw_rect(Rect2(o.x - 0.3 * u, o.y - 1.5 * u, 0.7 * u, 1.5 * u), Color(0.5, 0.35, 0.25))
+					2:   # lamp post
+						_box(o.x, o.y, 0.2 * u, 3.4 * u, Color(0.25, 0.25, 0.3), 1.5)
+						_ball(o.x, o.y - 3.6 * u, 0.4 * u, Color(1.0, 0.95, 0.6))
+					3:   # mailbox
+						_box(o.x, o.y, 0.3 * u, 1.0 * u, Color(0.4, 0.3, 0.2), 1.5)
+						_box(o.x, o.y - 1.0 * u, 0.9 * u, 0.6 * u, Color(0.2, 0.4, 0.8))
+			4:   # nature
+				match kind:
+					0, 1:
+						_poly(OCT, o + Vector2(0, -0.6 * u), 0.0, Vector2(1.5, 1.1) * u, Color(0.6, 0.6, 0.62))
+					2:
+						_box(o.x, o.y, 0.4 * u, 1.0 * u, Color(0.4, 0.28, 0.18), 1.5)
+						_tri_up(o.x, o.y - 0.6 * u, 2.0 * u, 2.6 * u, Color(0.2, 0.5, 0.3))
+					3:
+						_ball(o.x, o.y - 0.7 * u, 1.0 * u, Color(0.3, 0.6, 0.3))
+			5:   # city
+				match kind:
+					0, 1:   # kiosk
+						_box(o.x, o.y, 2.4 * u, 2.0 * u, Color(0.4, 0.5, 0.6))
+						_box(o.x, o.y - 2.0 * u, 2.8 * u, 0.4 * u, Color(0.85, 0.3, 0.3))
+					2:   # hydrant
+						_box(o.x, o.y, 0.7 * u, 1.0 * u, Color(0.85, 0.2, 0.2))
+					3:   # lamp
+						_box(o.x, o.y, 0.2 * u, 3.6 * u, Color(0.3, 0.3, 0.35), 1.5)
+						_box(o.x + 0.5 * u, o.y - 3.6 * u, 1.2 * u, 0.3 * u, Color(0.3, 0.3, 0.35), 1.5)
+			6:   # beach
+				match kind:
+					0, 1:   # umbrella
+						_box(o.x, o.y, 0.15 * u, 2.4 * u, Color(0.4, 0.3, 0.2), 1.5)
+						_poly(TRI, o + Vector2(0, -2.6 * u), 0.0, Vector2(3.2, 1.2) * u, Color(0.95, 0.35, 0.4))
+					2:   # towel
+						_box(o.x, o.y, 2.2 * u, 0.25 * u, Color(0.3, 0.7, 0.9), 1.5)
+					3:   # sandcastle
+						_box(o.x, o.y, 1.6 * u, 1.0 * u, Color(0.95, 0.85, 0.55))
+						_box(o.x - 0.5 * u, o.y - 1.0 * u, 0.5 * u, 0.5 * u, Color(0.95, 0.85, 0.55))
+			7:   # cloud puffs
+				_poly(CLOUD, o + Vector2(0, -0.9 * u), 0.0, Vector2(1.0 + h, 0.8) * u, Color(1, 1, 1), 2.0)
+			8:   # moon
+				match kind:
+					0, 1:   # cheese wedge
+						_poly(TRI, o + Vector2(0, -0.7 * u), 0.0, Vector2(2.4, 1.4) * u, Color(1.0, 0.85, 0.3))
+						_ball(o.x + 0.3 * u, o.y - 0.6 * u, 0.25 * u, Color(0.8, 0.6, 0.15), 1.5)
+					2:   # flag
+						_box(o.x, o.y, 0.12 * u, 3.0 * u, Color(0.9, 0.9, 0.9), 1.5)
+						_poly(TRI, o + Vector2(0.6 * u, -2.6 * u), -PI * 0.5, Vector2(0.9, 1.2) * u, Color(0.9, 0.2, 0.3), 1.5)
+					3:
+						_poly(OCT, o + Vector2(0, -0.35 * u), 0.0, Vector2(2.0, 0.5) * u, Color(0.85, 0.65, 0.2))
+			9:   # dino
+				match kind:
+					0, 1:   # fern
+						for lf in 3:
+							_poly(TRI, o + Vector2((lf - 1) * 0.7 * u, -1.0 * u), (lf - 1) * 0.5, Vector2(0.7, 2.0) * u, Color(0.3, 0.6, 0.25), 2.0)
+					2:   # egg
+						_poly(OCT, o + Vector2(0, -0.8 * u), 0.0, Vector2(0.8, 1.0) * u, Color(0.95, 0.92, 0.8))
+					3:   # bone
+						draw_line(o + Vector2(-1.0, -0.4) * u, o + Vector2(1.0, -0.4) * u, BLACK, 9.0)
+						draw_line(o + Vector2(-1.0, -0.4) * u, o + Vector2(1.0, -0.4) * u, Color(0.95, 0.95, 0.9), 5.0)
+			10:  # disco
+				match kind:
+					0, 1:   # disco ball on a stand
+						_box(o.x, o.y, 0.15 * u, 2.4 * u, Color(0.7, 0.7, 0.8), 1.5)
+						_ball(o.x, o.y - 2.9 * u, 0.9 * u, Color.from_hsv(fmod(_time * 0.5 + h, 1.0), 0.3, 1.0))
+					2:   # speaker
+						_box(o.x, o.y, 1.6 * u, 2.2 * u, Color(0.15, 0.1, 0.2))
+						_ball(o.x, o.y - 0.8 * u, 0.4 * u + sin(_time * 12.0) * 2.0, Color(0.8, 0.8, 0.9), 1.5)
+						_ball(o.x, o.y - 1.7 * u, 0.25 * u, Color(0.8, 0.8, 0.9), 1.5)
+					3:
+						_poly(DIAMOND, o + Vector2(0, -1.0 * u), _time, Vector2(1.2, 1.2) * u, Color.from_hsv(fmod(_time * 0.3 + h, 1.0), 0.8, 1.0))
 
 func _draw_signs() -> void:
 	# a sign every 100 m, and the best-distance flag
@@ -407,11 +659,11 @@ func _draw_things() -> void:
 				_poly_sq(HEX, Vector2(sx, sy), _time * 1.2, 0.5, Color(0.55, 0.4, 0.1), 2.0)
 				_glint(Vector2(sx, sy), wx, 1.7)
 			Flight.K_PAD:
-				_draw_pad(sx, f.t_phase[i], wx)
+				_draw_pad(sx, f.t_phase[i], wx, f.t_y[i], int(Zones.list[f.t_zone[i]]["pad_skin"]), f.t_zone[i])
 			Flight.K_FAN:
-				_draw_fan(sx)
+				_draw_fan(sx, f.t_y[i], int(Zones.list[f.t_zone[i]]["fan_skin"]), f.t_scale[i])
 			Flight.K_BIRD:
-				_draw_bird(sx, sy, wx)
+				_draw_bird(sx, sy, wx, f.t_zone[i], f.t_scale[i])
 
 ## The scrap glint: a thin white star that flashes now and then (each nut on its own beat).
 func _glint(o: Vector2, wx: float, scale: float) -> void:
@@ -422,54 +674,107 @@ func _glint(o: Vector2, wx: float, scale: float) -> void:
 			return
 		_poly(STAR, o + Vector2(-0.3, -0.35) * _ppm * scale, 0.0, Vector2(1.1, 1.1) * _ppm * scale * k, Color(1, 1, 1, 0.95), 1.0)
 
-## A bounce tire: two tyres on a coil spring that bobs, a big bouncing UP arrow above, and a
-## damped spring wobble after every bounce (`phase` counts down from 0.35 after a hit).
-func _draw_pad(sx: float, phase: float, wx: float) -> void:
-	var base_y := _ground_sy
+## A building under a raised pad or vent (Town awnings, City rooftops): a block from the ground up to `base`.
+func _draw_stand(sx: float, base: float, z: int) -> void:
+	if base <= 0.3:
+		return
+	var top := _ground_sy - base * _ppm
+	var wpx := 5.2 * _ppm
+	_box(sx, _ground_sy, wpx, base * _ppm, _zp(z, 5))
+	for r in int(base / 2.6):
+		draw_rect(Rect2(sx - wpx * 0.32, top + (1.0 + r * 2.4) * _ppm, wpx * 0.2, 1.0 * _ppm), Color(1, 0.95, 0.6, 0.7))
+		draw_rect(Rect2(sx + wpx * 0.1, top + (1.0 + r * 2.4) * _ppm, wpx * 0.2, 1.0 * _ppm), Color(1, 0.95, 0.6, 0.7))
+
+## A bounce pad. Skins: tyre on a coil spring, hay bale, shop awning, beach ball. All squash and wobble
+## after a bounce (`phase` counts down from 0.35), all carry the big bobbing UP arrow.
+func _draw_pad(sx: float, phase: float, wx: float, base: float, skin: int, z: int) -> void:
+	_draw_stand(sx, base, z)
+	var base_y := _ground_sy - base * _ppm
 	var elapsed := 0.35 - phase
 	var disp := 0.0
 	if phase > 0.0:
 		disp = exp(-elapsed * 7.0) * cos(elapsed * 30.0)   # +1 = squashed down, then rebounds
 	var idle := sin(_time * 4.0 + wx) * 0.06
-	var lift := 0.9 - 0.45 * disp + idle                    # height of the top tyre above the base tyre (m)
-	_poly(OCT, Vector2(sx, base_y - 0.35 * _ppm), 0.0, Vector2(2.3, 0.4) * _ppm, Color(0.2, 0.2, 0.22))
-	# the coil between the tyres
-	for k in 9:
-		var t := k / 8.0
-		_zig[k] = Vector2(sx + (0.7 if k % 2 == 0 else -0.7) * _ppm * (0.4 if k == 0 or k == 8 else 1.0), base_y - (0.55 + t * lift) * _ppm)
-	draw_polyline(_zig, BLACK, 7.0)
-	draw_polyline(_zig, Color(0.85, 0.85, 0.9), 3.5)
+	var lift := 0.9 - 0.45 * disp + idle                    # height of the top above the base (m)
 	var top_y := base_y - (0.8 + lift) * _ppm
-	_poly(OCT, Vector2(sx, top_y), 0.0, Vector2(2.0, 0.4 * (1.0 + 0.3 * disp)) * _ppm, Color(0.95, 0.5, 0.15))
-	# the big arrow
+	match skin:
+		1:   # hay bale that squashes
+			var hh := (1.5 - 0.5 * disp + idle) * _ppm
+			_box(sx, base_y, 3.4 * _ppm, hh, Color(0.95, 0.82, 0.35), 3.0)
+			draw_line(Vector2(sx - 1.7 * _ppm, base_y - hh * 0.5), Vector2(sx + 1.7 * _ppm, base_y - hh * 0.5), BLACK, 3.0)
+			top_y = base_y - hh
+		2:   # awning
+			var ah := (0.5 - 0.2 * disp) * _ppm
+			for k in 6:
+				_box(sx + (k - 2.5) * 0.7 * _ppm, base_y - 1.0 * _ppm, 0.7 * _ppm, ah + 0.6 * _ppm, Color(0.9, 0.2, 0.25) if k % 2 == 0 else Color(1, 1, 1), 2.0)
+			top_y = base_y - 1.6 * _ppm - ah
+		3:   # beach ball
+			var rr := (1.2 - 0.35 * disp) * _ppm
+			_poly(OCT, Vector2(sx, base_y - rr), 0.0, Vector2(1.25 * _ppm, rr), Color(1.0, 0.85, 0.2), 3.0)
+			_poly(TRI, Vector2(sx, base_y - rr), _time * 0.0, Vector2(1.0 * _ppm, rr * 1.4), Color(0.9, 0.2, 0.3), 2.0)
+			top_y = base_y - rr * 2.0
+		_:   # tyre on a spring
+			_poly(OCT, Vector2(sx, base_y - 0.35 * _ppm), 0.0, Vector2(2.3, 0.4) * _ppm, Color(0.2, 0.2, 0.22))
+			for k in 9:
+				var t := k / 8.0
+				_zig[k] = Vector2(sx + (0.7 if k % 2 == 0 else -0.7) * _ppm * (0.4 if k == 0 or k == 8 else 1.0), base_y - (0.55 + t * lift) * _ppm)
+			draw_polyline(_zig, BLACK, 7.0)
+			draw_polyline(_zig, Color(0.85, 0.85, 0.9), 3.5)
+			_poly(OCT, Vector2(sx, top_y), 0.0, Vector2(2.0, 0.4 * (1.0 + 0.3 * disp)) * _ppm, Color(0.95, 0.5, 0.15))
 	var bob := sin(_time * 5.0 + wx) * 0.35 + maxf(-disp, 0.0) * 1.2
-	var ay := top_y - (2.4 + bob) * _ppm
-	_poly(ARROW_UP, Vector2(sx, ay), 0.0, Vector2(2.4, 2.8) * _ppm, Color(1.0, 0.9, 0.2), 4.0)
+	_poly(ARROW_UP, Vector2(sx, top_y - (2.4 + bob) * _ppm), 0.0, Vector2(2.4, 2.8) * _ppm, Color(1.0, 0.9, 0.2), 4.0)
 
-## An updraft fan on a stand, a faint wind column and chevrons rising through it.
-func _draw_fan(sx: float) -> void:
-	var gy := _ground_sy
-	var hub := Vector2(sx, gy - 1.7 * _ppm)
+## An updraft: fan, windmill, heat vent or geyser, with a wind column and chevrons rising through it.
+func _draw_fan(sx: float, base: float, skin: int, power: float) -> void:
+	var z := _zone_at_screen(sx)
+	_draw_stand(sx, base, z)
+	var gy := _ground_sy - base * _ppm
 	var hw := Tuning.fan_half_width * _ppm
 	var col_h := Tuning.fan_height * _ppm
-	draw_rect(Rect2(sx - hw, gy - col_h, hw * 2.0, col_h), Color(0.75, 0.95, 1.0, 0.16))
+	var tint := Color(0.75, 0.95, 1.0, 0.16)
+	var chev := Color(1, 1, 1)
+	if skin == 2:
+		tint = Color(1.0, 0.6, 0.2, 0.2)
+		chev = Color(1.0, 0.85, 0.4)
+	elif skin == 3:
+		tint = Color(0.8, 0.9, 1.0, 0.22)
+	draw_rect(Rect2(sx - hw, gy - col_h, hw * 2.0, col_h), tint)
 	for k in 12:
-		var ph := fmod(_time * 0.8 + k * 0.083, 1.0)
+		var ph := fmod(_time * 0.8 * power + k * 0.083, 1.0)
 		var dx := (_hash(k + 123) - 0.5) * 2.0 * Tuning.fan_half_width * 0.8
 		var p := Vector2(sx + dx * _ppm, gy - (2.0 + ph * (Tuning.fan_height - 2.0)) * _ppm)
 		var a := 0.85 * sin(ph * PI)
 		var w := 0.5 * _ppm
-		var c := Color(1, 1, 1, a)
 		draw_line(p + Vector2(-w, w * 0.6), p, Color(0, 0, 0, a * 0.7), 7.0)
 		draw_line(p + Vector2(w, w * 0.6), p, Color(0, 0, 0, a * 0.7), 7.0)
-		draw_line(p + Vector2(-w, w * 0.6), p, c, 4.0)
-		draw_line(p + Vector2(w, w * 0.6), p, c, 4.0)
-	_poly(TRI, Vector2(sx, gy - 0.9 * _ppm), 0.0, Vector2(2.6, 1.8) * _ppm, Color(0.45, 0.5, 0.55))
-	_poly(OCT, hub, 0.0, Vector2(1.5, 1.5) * _ppm, Color(0.8, 0.82, 0.85), 2.0)
-	var ang := _time * 14.0
-	for b in 3:
-		_poly(DIAMOND, hub + Vector2(cos(ang + b * TAU / 3.0), sin(ang + b * TAU / 3.0)) * 0.7 * _ppm, ang + b * TAU / 3.0, Vector2(1.4, 0.45) * _ppm, Color(0.3, 0.7, 0.95), 2.0)
-	_poly_sq(HEX, hub, 0.0, 0.4, Color(0.2, 0.2, 0.25), 2.0)
+		draw_line(p + Vector2(-w, w * 0.6), p, Color(chev.r, chev.g, chev.b, a), 4.0)
+		draw_line(p + Vector2(w, w * 0.6), p, Color(chev.r, chev.g, chev.b, a), 4.0)
+	match skin:
+		1:   # windmill: a tower with big turning sails
+			var hub := Vector2(sx, gy - 5.2 * _ppm)
+			_poly(TRI, Vector2(sx, gy - 2.6 * _ppm), 0.0, Vector2(2.6, 5.2) * _ppm, Color(0.92, 0.88, 0.8))
+			var ang := _time * 3.0
+			for b in 4:
+				var a2 := ang + b * PI * 0.5
+				_poly(RECT, hub + Vector2(cos(a2), sin(a2)) * 1.5 * _ppm, a2, Vector2(3.0, 0.7) * _ppm, Color(0.75, 0.3, 0.25), 2.5)
+			_ball(hub.x, hub.y, 0.45 * _ppm, Color(0.3, 0.2, 0.15))
+		2:   # heat vent: a grate with shimmering heat
+			_box(sx, gy, 3.2 * _ppm, 0.9 * _ppm, Color(0.35, 0.35, 0.4))
+			for k in 4:
+				draw_line(Vector2(sx - 1.2 * _ppm + k * 0.8 * _ppm, gy - 0.15 * _ppm), Vector2(sx - 1.2 * _ppm + k * 0.8 * _ppm, gy - 0.75 * _ppm), Color(1.0, 0.5, 0.15), 4.0)
+		3:   # geyser: a fountain of stacked puffs
+			for k in 5:
+				var ph2 := fmod(_time * 1.5 + k * 0.2, 1.0)
+				_ball(sx + sin(_time * 3.0 + k) * 8.0, gy - (1.0 + ph2 * 5.0) * _ppm, (1.2 - ph2 * 0.6) * _ppm, Color(0.9, 0.95, 1.0, 0.9), 2.0)
+			_poly(OCT, Vector2(sx, gy - 0.3 * _ppm), 0.0, Vector2(1.8, 0.45) * _ppm, Color(0.5, 0.5, 0.52))
+		_:   # plain fan on a stand
+			var hub2 := Vector2(sx, gy - 1.7 * _ppm)
+			_poly(TRI, Vector2(sx, gy - 0.9 * _ppm), 0.0, Vector2(2.6, 1.8) * _ppm, Color(0.45, 0.5, 0.55))
+			_poly(OCT, hub2, 0.0, Vector2(1.5, 1.5) * _ppm, Color(0.8, 0.82, 0.85), 2.0)
+			var ang2 := _time * 14.0
+			for b2 in 3:
+				_poly(DIAMOND, hub2 + Vector2(cos(ang2 + b2 * TAU / 3.0), sin(ang2 + b2 * TAU / 3.0)) * 0.7 * _ppm, ang2 + b2 * TAU / 3.0, Vector2(1.4, 0.45) * _ppm, Color(0.3, 0.7, 0.95), 2.0)
+			_poly_sq(HEX, hub2, 0.0, 0.4, Color(0.2, 0.2, 0.25), 2.0)
 
 ## Horizontal streaks across the screen while a boost burns.
 func _draw_speed_lines() -> void:
@@ -483,13 +788,15 @@ func _draw_speed_lines() -> void:
 		x = _size.x + len - x
 		draw_line(Vector2(x, y), Vector2(x + len, y), Color(1, 1, 1, 0.5 * boost_fx * (0.4 + h)), 3.0 + 4.0 * h)
 
-func _draw_bird(sx: float, sy: float, wx: float) -> void:
+func _draw_bird(sx: float, sy: float, wx: float, z: int, scale: float) -> void:
 	var flap := sin(_time * 14.0 + wx)
 	var o := Vector2(sx, sy)
-	_poly(BIRD_WING, o + Vector2(0, -0.1 * _ppm), 0.0, Vector2(1.0, -flap * 0.7 - 0.2) * _ppm * 1.0, Color(0.28, 0.24, 0.4))
-	_poly(BIRD_BODY, o, 0.0, Vector2(_ppm, _ppm), Color(0.4, 0.34, 0.55))
-	_poly(BIRD_BEAK, o, 0.0, Vector2(_ppm, _ppm), Color(1.0, 0.7, 0.15), 2.0)
-	draw_circle(o + Vector2(0.6, -0.15) * _ppm, 3.5, Color(1, 1, 1))
+	var u := _ppm * scale
+	var body: Color = Zones.list[z]["bird_color"]
+	_poly(BIRD_WING, o + Vector2(0, -0.1 * u), 0.0, Vector2(1.0, -flap * 0.7 - 0.2) * u, body.darkened(0.25))
+	_poly(BIRD_BODY, o, 0.0, Vector2(u, u), body)
+	_poly(BIRD_BEAK, o, 0.0, Vector2(u, u), Color(1.0, 0.7, 0.15), 2.0)
+	draw_circle(o + Vector2(0.6, -0.15) * u, 3.5 * scale, Color(1, 1, 1))
 
 func _draw_particles() -> void:
 	for i in PARTICLES:
@@ -501,11 +808,14 @@ func _draw_particles() -> void:
 		var col := _pcol[i]
 		col.a = clampf(t * 2.0, 0.0, 1.0)
 		var o := Vector2(_sx(_px[i]), _sy(_py[i]))
+		if o.x < -300.0 or o.x > _size.x + 300.0 or o.y < -300.0 or o.y > _size.y + 300.0:
+			continue
 		match _pkind[i]:
 			P_FLAME:
 				draw_circle(o, sz * 0.5, col)
 			P_FEATHER:
-				_poly(DIAMOND, o, _time * 8.0 + i, Vector2(sz * 1.6, sz * 0.7), col, 2.0)
+				if sz > 4.0:
+					_poly(DIAMOND, o, _time * 8.0 + i, Vector2(sz * 1.6, sz * 0.7), col, 2.0)
 			_:
 				draw_rect(Rect2(o - Vector2(sz, sz) * 0.5, Vector2(sz, sz)), col)
 				draw_rect(Rect2(o - Vector2(sz, sz) * 0.5, Vector2(sz, sz)), Color(0, 0, 0, col.a), false, 2.0)

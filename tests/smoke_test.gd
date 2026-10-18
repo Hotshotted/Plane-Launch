@@ -288,6 +288,140 @@ func _initialize() -> void:
 	sv.reset_all()
 	main._to_shop()
 
+	print("2c. zones")
+	check(Zones.COUNT == 11 and Zones.list.size() == 11 and Zones.list[0]["name"] == "Junkyard" and Zones.list[1]["name"] == "Farmland" and Zones.list[2]["name"] == "River" and Zones.list[3]["name"] == "Town" and Zones.list[4]["name"] == "Hills" and Zones.list[5]["name"] == "City" and Zones.list[6]["name"] == "Coast", "the journey starts Junkyard, Farmland, River, Town, Hills, City, Coast")
+	var zones_ok := true
+	for i in range(1, Zones.COUNT):
+		if not (Zones.list[i]["start"] > Zones.list[i - 1]["start"] and Zones.list[i]["bonus"] > Zones.list[i - 1]["bonus"] and Zones.list[i]["pal"].size() == 10):
+			zones_ok = false
+	check(zones_ok and Zones.list[0]["start"] == 0.0, "zones get farther apart and richer, each with a full palette")
+	check(tn.zone_index(0.0) == 0 and tn.zone_index(149.9) == 0 and tn.zone_index(150.0) == 1 and tn.zone_index(99999.0) == 10, "zone lookup by distance")
+	f = air(140.0, 40.0, 25, 0, 0)
+	var zone_events := 0
+	var zone_val := -1
+	for i in 120:
+		f.step(1.0 / 120.0, false)
+		for k in f.ev_n:
+			if f.ev_kind[k] == FlightS.EV_ZONE:
+				zone_events += 1
+				zone_val = f.ev_val[k]
+		f.ev_n = 0
+	check(zone_events == 1 and zone_val == 1 and f.zone == 1 and f.zone_max == 1, "crossing into Farmland raises one zone event")
+	f = air(400.0, 0.62, 18, -3, 0)
+	f.advance(0.05, false)
+	check(f.skips == 1 and f.vy > 0.0 and not f.is_over() and f.phase == FlightS.PH_AIR, "River: skimming the water skips you back up (vy %.1f)" % f.vy)
+	f = air(400.0, 0.62, 18, -13, -10)
+	f.advance(0.1, false)
+	check(f.phase != FlightS.PH_AIR and f.skips == 0, "River: a steep dive sinks")
+	f = air(400.0, 0.62, 6, -2, 0)
+	f.advance(0.1, false)
+	check(f.phase != FlightS.PH_AIR, "River: too slow to skip, you sink")
+	f = air(2300.0, 0.62, 18, -3, 0)
+	f.advance(0.05, false)
+	check(f.skips == 1, "Coast: the sea skips too")
+	f = air(3100.0, 0.62, 16, -10, -10)
+	f.advance(0.05, false)
+	check(f.skips == 1 and f.vy > 5.0 and f.phase == FlightS.PH_AIR, "Cloud Kingdom: the ground is bouncy (vy %.1f)" % f.vy)
+	f = air(100.0, 0.62, 16, -3, 0)
+	f.advance(0.05, false)
+	check(f.phase != FlightS.PH_AIR, "Junkyard: dirt ends the run")
+	var fm = air(4100.0, 200.0, 10, 0, 0)
+	var fe = air(100.0, 200.0, 10, 0, 0)
+	fm.advance(1.0, false)
+	fe.advance(1.0, false)
+	check(absf(fm.vy) < absf(fe.vy) * 0.8, "Cheese Moon: low gravity (vy %.1f vs %.1f)" % [fm.vy, fe.vy])
+	f = air(1600.0, 11.4, 14, -5, -5)
+	f.add_thing(FlightS.K_PAD, 1601.0, 10.0)
+	f.advance(0.1, false)
+	check(f.pad_bounces == 1 and f.vy > 5.0, "City: a rooftop pad bounces you (base 10 m)")
+	f = air(1600.0, 2.0, 14, -2, -5)
+	f.add_thing(FlightS.K_PAD, 1601.0, 10.0)
+	f.advance(0.3, false)
+	check(f.pad_bounces == 0, "...but you do not bounce off a rooftop from the street")
+	var fv = air(1600.0, 13.0, 14, 0, 0)
+	fv.add_thing(FlightS.K_FAN, 1600.0, 10.0)
+	var fvn = air(1600.0, 13.0, 14, 0, 0)
+	fv.advance(0.2, false)
+	fvn.advance(0.2, false)
+	check(fv.y > fvn.y + 0.3, "City: a heat vent on a roof lifts you (%.1f vs %.1f m)" % [fv.y, fvn.y])
+	var roof_pads := 0
+	var street_pads := 0
+	var river_pads := 0
+	var junk_pads := 0
+	for z_start in [1600.0, 700.0, 380.0, 20.0]:
+		f = air(0, 50, 20)
+		f.rng.seed = 11
+		for c in 60:
+			f.clear_things()
+			f.gen_x = z_start
+			f._gen_chunk()
+			for i in FlightS.MAX_THINGS:
+				if f.t_active[i] != 0 and f.t_kind[i] == FlightS.K_PAD:
+					if z_start == 1600.0 and f.t_y[i] >= 6.0:
+						roof_pads += 1
+					if z_start == 700.0 and f.t_y[i] >= 3.0 and f.t_y[i] <= 6.0:
+						street_pads += 1
+					if z_start == 380.0:
+						river_pads += 1
+					if z_start == 20.0:
+						junk_pads += 1
+	check(roof_pads > 3 and street_pads > 3, "City and Town generate raised pads (%d roof, %d awning)" % [roof_pads, street_pads])
+	check(river_pads * 3 < junk_pads, "the River has far fewer pads than the Junkyard (%d vs %d)" % [river_pads, junk_pads])
+	sv.reset_all()
+	var claim: Dictionary = sv.claim_zones(2)
+	check(claim["bonus"] == tn.zone_bonus(1) + tn.zone_bonus(2) and claim["new"] == 2 and sv.zone_best == 2, "reaching new zones pays their bonuses (%d scrap)" % claim["bonus"])
+	check(sv.claim_zones(2)["bonus"] == 0 and sv.claim_zones(1)["bonus"] == 0, "...only once")
+	check(tn.zone_bonus(1) > 100, "a zone bonus is large next to a first run (%d vs ~40 scrap)" % tn.zone_bonus(1))
+	sv.reset_all()
+	main._to_shop()
+	main.hud._launch_btn.pressed.emit()
+	main.flight.zone_max = 1
+	fly_main(main)
+	check(main.last_result["zone_bonus"] == tn.zone_bonus(1) and main.last_result["zone"] == 1 and sv.zone_best == 1 and main.hud._result.text.contains("zone bonus"), "a run into Farmland pays the bonus at the end and says so")
+	main.hud._launch_btn.pressed.emit()
+	main.flight.zone_max = 1
+	fly_main(main)
+	check(main.last_result["zone_bonus"] == 0, "the same zone pays nothing the second time")
+	sv.reset_all()
+	main._to_shop()
+	main.hud._launch_btn.pressed.emit()
+	for i in 10:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+	main.flight.push_event(FlightS.EV_ZONE, main.flight.x, 10.0, 1)
+	main._handle_events()
+	check(main.hud._banner.visible and main.hud._banner.text.contains("NEW ZONE!") and main.hud._banner.text.contains("FARMLAND"), "a new zone shows a banner with its bonus (%s)" % main.hud._banner.text.replace("\n", " | "))
+	sv.zone_best = 1
+	main.flight.push_event(FlightS.EV_ZONE, main.flight.x, 10.0, 1)
+	main._handle_events()
+	check(main.hud._banner.text == "FARMLAND", "an old zone only shows its name")
+	main.hud.set_zone(2, 2, 1, 400.0)
+	var fills: Array = main.hud._flight_bar["fills"]
+	check(fills[0].anchor_right == 1.0 and fills[2].anchor_right == 1.0 and fills[3].anchor_right > 0.0 and fills[3].anchor_right < 1.0 and fills[5].anchor_right == 0.0, "the progress bar marks the zones reached and fills toward the next")
+	check(main.hud._zone_label.text == "RIVER", "the current zone is named")
+	fly_main(main)
+	var pal_ok := true
+	for z in range(1, Zones.COUNT):
+		var zx: float = tn.zone_start(z)
+		var w: Node2D = main.world
+		w._size = Vector2(1080, 1920)
+		w._ppm = 28.0
+		w.cam_x = zx - 540.0 / 28.0 - 1.0
+		w._update_palette()
+		var before: Color = w._pal[1]
+		w.cam_x = zx - 540.0 / 28.0 + 1.0
+		w._update_palette()
+		var after: Color = w._pal[1]
+		w.cam_x = zx - 540.0 / 28.0 + 200.0
+		w._update_palette()
+		var far_after: Color = w._pal[1]
+		var target: Color = Zones.list[z]["pal"][1]
+		if z != 10 and (absf(before.r - after.r) + absf(before.g - after.g) + absf(before.b - after.b) > 0.06 or absf(far_after.r - target.r) + absf(far_after.g - target.g) > 0.01):
+			pal_ok = false
+	check(pal_ok, "the sky fades smoothly across every zone border and settles on the zone's colours")
+	check(main.prewarm_zones_seen.size() == Zones.COUNT, "the pre-warm drew every zone's scenery (%d zones)" % main.prewarm_zones_seen.size())
+	sv.reset_all()
+	main._to_shop()
+
 	print("3. upgrades and the early game")
 	var base := avg_distance(lv())
 	check(base > 40.0 and base < 150.0, "a level-0 run is short (%.0f m)" % base)

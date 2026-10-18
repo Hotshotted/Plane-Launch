@@ -25,6 +25,14 @@ var _hint: Label
 var _boost_panel: PanelContainer
 var _boost_pips: Label       # charges, shown beside the button
 var _boost_style: StyleBoxFlat
+var _zone_label: Label
+var _banner: Label
+var _banner_born := -10.0
+var _flight_bar := {}
+var _shop_bar := {}
+var _bar_key := -1
+var _shop_bar_key := -1
+var _last_zone_name := ""
 var _pop_labels: Array[Label] = []
 var _pop_born := PackedFloat32Array()
 var _pop_y := PackedFloat32Array()
@@ -108,20 +116,34 @@ func _build_flight_hud() -> void:
 	_flight_root.add_child(_dist)
 	_best = _label(38)
 	_best.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_best.offset_top = 190
+	_best.offset_top = 165
 	_best.modulate = Color(1, 0.95, 0.6)
 	_flight_root.add_child(_best)
+	_zone_label = _label(40)
+	_zone_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	_zone_label.offset_top = 212
+	_zone_label.modulate = Color(0.8, 0.95, 1.0)
+	_flight_root.add_child(_zone_label)
+	_flight_bar = _make_bar(_flight_root, 268.0)
+	_banner = _label(80)
+	_banner.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_banner.offset_left = -520
+	_banner.offset_right = 520
+	_banner.offset_top = -560
+	_banner.offset_bottom = -300
+	_banner.visible = false
+	_flight_root.add_child(_banner)
 	_scrap = _label(44, HORIZONTAL_ALIGNMENT_RIGHT)
 	_scrap.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	_scrap.offset_left = -420
 	_scrap.offset_right = -30
-	_scrap.offset_top = 250
+	_scrap.offset_top = 330
 	_scrap.modulate = Color(1, 0.85, 0.3)
 	_flight_root.add_child(_scrap)
 	_gauge = _label(32, HORIZONTAL_ALIGNMENT_LEFT, 6)
 	_gauge.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 	_gauge.offset_left = 30
-	_gauge.offset_top = 250
+	_gauge.offset_top = 330
 	_gauge.modulate = Color(1, 1, 1, 0.85)
 	_flight_root.add_child(_gauge)
 	_stall = _label(90)
@@ -199,6 +221,7 @@ func _build_shop() -> void:
 	head.add_child(_shop_scrap)
 	head.add_child(_shop_best)
 	col.add_child(head)
+	_shop_bar = _make_bar_inline(col)
 	_result = _label(36, HORIZONTAL_ALIGNMENT_CENTER, 0)
 	_result.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_result.custom_minimum_size = Vector2(0, 100)
@@ -245,6 +268,13 @@ func _build_shop() -> void:
 	_launch_btn.focus_mode = Control.FOCUS_NONE
 	_launch_btn.pressed.connect(func(): launch_pressed.emit())
 	col.add_child(_launch_btn)
+
+func _make_bar_inline(col: VBoxContainer) -> Dictionary:
+	var holder := Control.new()
+	holder.custom_minimum_size = Vector2(0, 30)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(holder)
+	return _make_bar(holder, 2.0)
 
 func _build_splash() -> void:
 	_splash = Control.new()
@@ -296,6 +326,9 @@ func set_mode(m: int) -> void:
 	_last_scrap = -1
 	_last_gauge = -1
 	_last_pips = -1
+	_bar_key = -1
+	_shop_bar_key = -1
+	_banner.visible = false
 
 func show_splash(on: bool) -> void:
 	_splash.visible = on
@@ -306,6 +339,13 @@ func prewarm_show(on: bool) -> void:
 	_shop_root.visible = on
 	_stall.visible = on
 	_hint.visible = on
+	_banner.visible = on
+	if on:
+		_banner.text = "NEW ZONE!\nCLOUD KINGDOM\n+1,900 scrap"
+		_banner.modulate = Color(1, 1, 1)
+		_zone_label.text = "CHEESE MOON"
+		_set_bar(_flight_bar, 3, 0.5)
+		_set_bar(_shop_bar, 3, 0.5)
 	for p in _pop_labels:
 		p.visible = on
 		p.text = "BOUNCE! +12 NEW BEST!"
@@ -372,6 +412,95 @@ func popup(text: String, pos: Vector2, color: Color) -> void:
 	_pop_y[i] = l.position.y
 
 # ---------------------------------------------------------------------------------------------
+# Zone progress bar (one segment per zone) and banner
+# ---------------------------------------------------------------------------------------------
+
+## A row of Zones.COUNT segments, each a dark box with a fill that grows left to right. Built once.
+func _make_bar(parent: Control, top: float) -> Dictionary:
+	var row := HBoxContainer.new()
+	row.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	row.offset_top = top
+	row.offset_bottom = top + 26.0
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 5)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(row)
+	var fills: Array[ColorRect] = []
+	for i in Zones.COUNT:
+		var seg := Control.new()
+		seg.custom_minimum_size = Vector2(86, 26)
+		seg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var edge := ColorRect.new()
+		edge.color = Color.BLACK
+		_full(edge)
+		seg.add_child(edge)
+		var bg := ColorRect.new()
+		bg.color = Color(0.16, 0.18, 0.24, 0.9)
+		_full(bg)
+		bg.offset_left = 3
+		bg.offset_top = 3
+		bg.offset_right = -3
+		bg.offset_bottom = -3
+		seg.add_child(bg)
+		var fill := ColorRect.new()
+		fill.color = Color(1.0, 0.8, 0.25)
+		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		fill.anchor_top = 0.0
+		fill.anchor_bottom = 1.0
+		fill.anchor_left = 0.0
+		fill.anchor_right = 0.0
+		fill.offset_left = 3
+		fill.offset_top = 3
+		fill.offset_bottom = -3
+		fill.offset_right = 0
+		seg.add_child(fill)
+		row.add_child(seg)
+		fills.append(fill)
+	return {"fills": fills}
+
+## Fill the bar: zones up to `reached` are gold, the next one fills with `progress` (0..1) in cyan.
+func _set_bar(bar: Dictionary, reached: int, progress: float) -> void:
+	var fills: Array = bar["fills"]
+	for i in Zones.COUNT:
+		var f: ColorRect = fills[i]
+		if i <= reached:
+			f.anchor_right = 1.0
+			f.offset_right = -3
+			f.color = Color(1.0, 0.8, 0.25)
+		elif i == reached + 1:
+			f.anchor_right = clampf(progress, 0.0, 1.0)
+			f.offset_right = -3 if progress >= 1.0 else 0
+			f.color = Color(0.4, 0.9, 1.0)
+		else:
+			f.anchor_right = 0.0
+			f.offset_right = 0
+
+func _zone_progress(distance: float, reached: int) -> float:
+	var nxt := mini(reached + 1, Zones.COUNT - 1)
+	var a := Tuning.zone_start(reached)
+	var b := Tuning.zone_start(nxt)
+	return clampf((distance - a) / maxf(b - a, 1.0), 0.0, 1.0)
+
+## In flight: the zone name and the bar (only touched when something visible changed).
+func set_zone(zone: int, zone_max: int, zone_best: int, distance: float) -> void:
+	var nm := Tuning.zone_name(zone)
+	if nm != _last_zone_name:
+		_last_zone_name = nm
+		_zone_label.text = nm.to_upper()
+	var reached := maxi(zone_max, zone_best)
+	var key := reached * 1000 + int(_zone_progress(distance, reached) * 50.0)
+	if key != _bar_key:
+		_bar_key = key
+		_set_bar(_flight_bar, reached, _zone_progress(distance, reached))
+
+## Big centred banner ("NEW ZONE!" ...), fading after about two seconds.
+func banner(text: String, color: Color) -> void:
+	_banner.text = text
+	_banner.modulate = color
+	_banner.visible = true
+	_banner_born = _time
+
+# ---------------------------------------------------------------------------------------------
 # Shop
 # ---------------------------------------------------------------------------------------------
 
@@ -382,13 +511,20 @@ func _on_buy(id: String) -> void:
 func refresh_shop(last: Dictionary) -> void:
 	_shop_scrap.text = "SCRAP  %s" % Tuning.fmt(Save.scrap)
 	_shop_best.text = "BEST  %s m" % Tuning.fmt(Save.best_distance)
+	var sk := Save.zone_best * 1000 + int(_zone_progress(Save.best_distance, Save.zone_best) * 50.0)
+	if sk != _shop_bar_key:
+		_shop_bar_key = sk
+		_set_bar(_shop_bar, Save.zone_best, _zone_progress(Save.best_distance, Save.zone_best))
 	if last.is_empty():
 		_result.text = "Hold the screen to pitch up, let go to dive.\nDive for speed, climb to trade it for height. Too slow and you stall!" if Save.runs == 0 else ""
 	else:
 		var t := "LANDED  %s m" % Tuning.fmt(last["distance"])
 		if last["new_best"]:
 			t += "   NEW BEST!"
-		t += "\n+%s scrap  (%s from distance, %s from %d pickups)" % [Tuning.fmt(last["earned"]), Tuning.fmt(last["dist_scrap"]), Tuning.fmt(last["picked"]), last["picked_count"]]
+		t += "\n+%s scrap  (%s distance, %s from %d pickups" % [Tuning.fmt(last["earned"]), Tuning.fmt(last["dist_scrap"]), Tuning.fmt(last["picked"]), last["picked_count"]]
+		if last["zone_bonus"] > 0:
+			t += ", %s zone bonus" % Tuning.fmt(last["zone_bonus"])
+		t += ")\nFarthest zone: %s" % Tuning.zone_name(last["zone"])
 		_result.text = t
 		_result.modulate = Color(1, 0.95, 0.5) if last["new_best"] else Color(1, 1, 1)
 	for i in _row_ids.size():
@@ -422,6 +558,14 @@ func _process(delta: float) -> void:
 			var m := l.modulate
 			m.a = clampf(1.0 - age / 0.9, 0.0, 1.0)
 			l.modulate = m
+	if _banner.visible and mode == MODE_FLIGHT:
+		var ba := _time - _banner_born
+		if ba > 2.4:
+			_banner.visible = false
+		else:
+			var bm := _banner.modulate
+			bm.a = clampf(2.4 - ba, 0.0, 1.0)
+			_banner.modulate = bm
 	_update_perf(delta)
 
 func set_perf_extra(text: String) -> void:

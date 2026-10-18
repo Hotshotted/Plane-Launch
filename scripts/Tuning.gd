@@ -16,7 +16,7 @@ var resume_skip_frames := 2
 var physics_step := 1.0 / 120.0
 
 # ---------- Start-up pre-warm (see Main._prewarm) ----------
-var prewarm_min_seconds := 1.2
+var prewarm_min_seconds := 1.5
 var prewarm_stable_frames := 10
 var prewarm_stable_ms := 45.0
 var prewarm_max_seconds := 5.0
@@ -128,6 +128,19 @@ var bird_weight_per_km := 2.0
 ## First chunk starts this far past the ramp lip.
 var first_chunk_x := 22.0
 
+# ---------- Zones ----------
+## Multiply every zone's start distance / scrap bonus (the zone table itself is in Zones.gd).
+var zone_distance_mult := 1.0
+var zone_bonus_mult := 1.0
+## Water (River, Coast): a shallow, fast enough touch skips the glider back up like a stone.
+var skip_min_speed := 10.0
+var skip_max_sink := 7.5
+var skip_restitution := 0.55
+var skip_min_kick := 3.0
+var skip_speed_kept := 0.97
+## Longest flight (s): a safety stop so a bouncing glider can never fly forever.
+var max_flight_seconds := 240.0
+
 # ---------- Economy ----------
 ## Scrap earned per meter flown.
 var scrap_per_meter := 0.5
@@ -143,6 +156,19 @@ var upgrades: Array[Dictionary] = [
 	{"id": "booster", "name": "Booster", "max": 8, "base_cost": 84.0, "growth": 1.65, "blurb": "boosts per run"},
 	{"id": "magnet", "name": "Scrap Magnet", "max": 8, "base_cost": 20.0, "growth": 1.45, "blurb": "pickup reach"},
 ]
+
+func zone_index(x: float) -> int:
+	return Zones.index_at(x, zone_distance_mult)
+
+func zone_start(i: int) -> float:
+	return Zones.start_of(i, zone_distance_mult)
+
+func zone_name(i: int) -> String:
+	return Zones.list[clampi(i, 0, Zones.COUNT - 1)]["name"]
+
+## Scrap paid the first time zone i is reached.
+func zone_bonus(i: int) -> int:
+	return roundi(float(Zones.list[clampi(i, 0, Zones.COUNT - 1)]["bonus"]) * zone_bonus_mult)
 
 func upgrade_def(id: String) -> Dictionary:
 	for u in upgrades:
