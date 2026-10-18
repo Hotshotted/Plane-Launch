@@ -49,6 +49,7 @@ var thing_count := 0                  # active things (for ?perf)
 var ev_kind := PackedInt32Array()
 var ev_x := PackedFloat32Array()
 var ev_y := PackedFloat32Array()
+var ev_val := PackedInt32Array()
 var ev_n := 0
 
 # --- the glider ---
@@ -113,10 +114,12 @@ func _init() -> void:
 	ev_kind.resize(MAX_EVENTS)
 	ev_x.resize(MAX_EVENTS)
 	ev_y.resize(MAX_EVENTS)
+	ev_val.resize(MAX_EVENTS)
 
-func push_event(kind: int, ex: float, ey: float) -> void:
+func push_event(kind: int, ex: float, ey: float, val: int = 0) -> void:
 	if ev_n < MAX_EVENTS:
 		ev_kind[ev_n] = kind
+		ev_val[ev_n] = val
 		ev_x[ev_n] = ex
 		ev_y[ev_n] = ey
 		ev_n += 1
@@ -335,7 +338,7 @@ func _touch_things(dt: float) -> void:
 					var v := Tuning.scrap_nut_value if kind == K_NUT else Tuning.scrap_gear_value
 					picked_value += v
 					picked_count += 1
-					push_event(EV_SCRAP, tx, t_y[i])
+					push_event(EV_SCRAP, tx, t_y[i], v)
 				elif d2 < mag * mag and mag > pick_r:
 					var d := sqrt(d2)
 					var pull := Tuning.magnet_pull_speed * dt
@@ -421,7 +424,7 @@ func scrap_total() -> int:
 # World generation
 # ---------------------------------------------------------------------------------------------
 
-func _add(kind: int, tx: float, ty: float, tvx: float = 0.0) -> void:
+func add_thing(kind: int, tx: float, ty: float, tvx: float = 0.0) -> void:
 	for i in MAX_THINGS:
 		if t_active[i] == 0:
 			t_active[i] = 1
@@ -459,37 +462,37 @@ func _gen_chunk() -> void:
 			var apex := rng.randf_range(5.0, 18.0 + 18.0 * d)
 			for i in 6:
 				var t := i / 5.0
-				_add(K_NUT, cx + 2.0 + t * 12.0, apex + 3.5 * sin(PI * t))
+				add_thing(K_NUT, cx + 2.0 + t * 12.0, apex + 3.5 * sin(PI * t))
 		1:   # a straight row of nuts
 			var ly := rng.randf_range(3.0, 28.0)
 			for i in 5:
-				_add(K_NUT, cx + 3.0 + i * 2.2, ly)
+				add_thing(K_NUT, cx + 3.0 + i * 2.2, ly)
 		2:   # a bounce pad with nuts along the arc it throws you on
 			var px := cx + rng.randf_range(4.0, 10.0)
-			_add(K_PAD, px, 0.0)
+			add_thing(K_PAD, px, 0.0)
 			for i in 4:
 				var t := i / 3.0
-				_add(K_NUT, px + 4.0 + t * 8.0, 7.0 + 4.0 * sin(PI * t))
+				add_thing(K_NUT, px + 4.0 + t * 8.0, 7.0 + 4.0 * sin(PI * t))
 		3:   # an updraft fan with nuts up its column
 			var fx := cx + rng.randf_range(4.0, 10.0)
-			_add(K_FAN, fx, 0.0)
+			add_thing(K_FAN, fx, 0.0)
 			for i in 4:
-				_add(K_NUT, fx, 4.0 + i * 3.5)
+				add_thing(K_NUT, fx, 4.0 + i * 3.5)
 		4:   # birds, sometimes guarding a gear
 			var n := 1 + (1 if rng.randf() < 0.4 else 0) + (1 if d > 0.4 and rng.randf() < 0.4 else 0)
 			for i in n:
 				var by := rng.randf_range(6.0, 30.0)
-				_add(K_BIRD, cx + 6.0 + i * 7.0, by, -Tuning.bird_drift)
+				add_thing(K_BIRD, cx + 6.0 + i * 7.0, by, -Tuning.bird_drift)
 				if i == 0 and rng.randf() < 0.45:
-					_add(K_GEAR, cx + 10.0, by + 2.0)
+					add_thing(K_GEAR, cx + 10.0, by + 2.0)
 		5:   # a lone gear up high with a couple of nuts
 			var gy := rng.randf_range(8.0, 30.0)
-			_add(K_GEAR, cx + 8.0, gy)
-			_add(K_NUT, cx + 5.0, gy - 1.5)
-			_add(K_NUT, cx + 11.0, gy - 1.5)
+			add_thing(K_GEAR, cx + 8.0, gy)
+			add_thing(K_NUT, cx + 5.0, gy - 1.5)
+			add_thing(K_NUT, cx + 11.0, gy - 1.5)
 		6:   # nuts skimming the ground
 			for i in 6:
-				_add(K_NUT, cx + 3.0 + i * 2.0, 1.6)
+				add_thing(K_NUT, cx + 3.0 + i * 2.0, 1.6)
 	gen_x += rng.randf_range(Tuning.chunk_len_min, Tuning.chunk_len_max)
 
 # ---------------------------------------------------------------------------------------------
