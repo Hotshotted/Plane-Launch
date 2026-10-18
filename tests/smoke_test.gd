@@ -422,6 +422,104 @@ func _initialize() -> void:
 	sv.reset_all()
 	main._to_shop()
 
+	print("2d. missions and Rusty")
+	var MissionsS: GDScript = load("res://scripts/Missions.gd")
+	var RustyS: GDScript = load("res://scripts/Rusty.gd")
+	var mrng := RandomNumberGenerator.new()
+	mrng.seed = 5
+	sv.reset_all()
+	check(sv.missions.is_empty(), "a fresh save has no missions yet")
+	sv.ensure_missions(mrng)
+	var types := {}
+	var all_ok := true
+	for m in sv.missions:
+		types[m["type"]] = true
+		if m["target"] <= 0 or m["reward"] <= 0 or MissionsS.describe(m).contains("?") or MissionsS.describe(m) == "":
+			all_ok = false
+	check(sv.missions.size() == 3 and types.size() == 3 and all_ok, "three different, readable missions with rewards")
+	var never_seen := true
+	for i in 200:
+		var mm: Dictionary = MissionsS.pick(sv, sv.missions, mrng)
+		if mm["type"] == "skip" or mm["type"] == "boost":
+			never_seen = false
+	check(never_seen, "no water-skip or boost missions before the River / a Booster")
+	sv.zone_best = 3
+	sv.levels["booster"] = 2
+	var saw_skip := false
+	var saw_boost := false
+	for i in 300:
+		var mm2: Dictionary = MissionsS.pick(sv, [], mrng)
+		saw_skip = saw_skip or mm2["type"] == "skip"
+		saw_boost = saw_boost or mm2["type"] == "boost"
+	check(saw_skip and saw_boost, "...and they appear once they can be done")
+	sv.reset_all()
+	var stats := {"distance": 100.0, "picked_value": 30, "pad_bounces": 3, "skips": 4, "fan_entries": 2, "boosts_used": 0, "gears_picked": 2, "bird_hits": 0, "zone_max": 2}
+	var done_all := true
+	for t in MissionsS.TYPES:
+		var mt := {"type": t, "target": 2, "reward": 10, "zone": 2}
+		var st_t := stats.duplicate()
+		if t == "boost":
+			st_t["boosts_used"] = 3
+		if not MissionsS.is_done(mt, st_t):
+			done_all = false
+	check(done_all, "every mission type recognises a flight that meets it")
+	var stats2 := stats.duplicate()
+	stats2["boosts_used"] = 1
+	stats2["bird_hits"] = 1
+	stats2["pad_bounces"] = 1
+	check(not MissionsS.is_done({"type": "noboost_zone", "target": 2, "reward": 10, "zone": 2}, stats2) and not MissionsS.is_done({"type": "nobird", "target": 50, "reward": 10, "zone": 0}, stats2) and not MissionsS.is_done({"type": "bounce", "target": 2, "reward": 10, "zone": 0}, stats2), "boosting, a bird hit or too few bounces fail the matching missions")
+	sv.missions = [{"type": "distance", "target": 50, "reward": 40, "zone": 0}, {"type": "bounce", "target": 9, "reward": 50, "zone": 0}, {"type": "gear", "target": 1, "reward": 60, "zone": 0}]
+	var completed: Array = MissionsS.evaluate(sv, stats, mrng)
+	var new_types := {}
+	for m in sv.missions:
+		new_types[m["type"]] = true
+	check(completed.size() == 2 and completed[0]["reward"] + completed[1]["reward"] == 100 and sv.missions.size() == 3 and new_types.size() == 3 and sv.missions_done == 2, "completing missions pays them and draws new ones (%d done)" % completed.size())
+	check(MissionsS.evaluate(sv, {"distance": 1.0, "picked_value": 0, "pad_bounces": 0, "skips": 0, "fan_entries": 0, "boosts_used": 0, "gears_picked": 0, "bird_hits": 0, "zone_max": 0}, mrng).is_empty(), "a poor flight completes nothing")
+	sv.missions = [{"type": "scrap", "target": 12, "reward": 33, "zone": 0}, {"type": "updraft", "target": 4, "reward": 44, "zone": 0}, {"type": "distance", "target": 80, "reward": 55, "zone": 0}]
+	sv.save_game()
+	sv.load_game()
+	check(sv.missions.size() == 3 and sv.missions[1]["type"] == "updraft" and sv.missions[2]["reward"] == 55, "missions survive a save round trip")
+	var fw2 := FileAccess.open(sv.path, FileAccess.WRITE)
+	fw2.store_string(JSON.stringify({"scrap": 5, "missions": [{"type": "bogus", "target": 3}, {"type": "gear", "target": 2, "reward": 9}, 7]}))
+	fw2.close()
+	sv.load_game()
+	check(sv.missions.size() == 1 and sv.missions[0]["type"] == "gear", "bad mission entries in a save are dropped (%s)" % str(sv.missions))
+	var rctx := {"new_best": true, "distance": 200.0, "best_before": 100.0, "mission_done": false, "new_zone": false, "stall_time": 0.0, "bird_hits": 0, "run": 0}
+	check(RustyS.RECORD.has(RustyS.comment(rctx)), "Rusty cheers a record")
+	rctx["new_best"] = false
+	rctx["distance"] = 30.0
+	check(RustyS.BAD.has(RustyS.comment(rctx)), "Rusty is sympathetic about a short flight")
+	rctx["stall_time"] = 2.0
+	check(RustyS.STALL.has(RustyS.comment(rctx)), "Rusty explains stalling")
+	rctx["stall_time"] = 0.0
+	rctx["bird_hits"] = 3
+	check(RustyS.BIRD.has(RustyS.comment(rctx)), "Rusty warns about birds")
+	rctx["bird_hits"] = 0
+	rctx["distance"] = 95.0
+	check(RustyS.GOOD.has(RustyS.comment(rctx)), "Rusty approves of a decent flight")
+	rctx["mission_done"] = true
+	check(RustyS.MISSION.has(RustyS.comment(rctx)), "Rusty congratulates a finished mission")
+	var lines := {}
+	rctx["mission_done"] = false
+	for r in 4:
+		rctx["run"] = r
+		lines[RustyS.comment(rctx)] = true
+	check(lines.size() >= 2, "Rusty varies his lines (%d different)" % lines.size())
+	sv.reset_all()
+	main._to_shop()
+	check(main.hud._rusty != null and main.hud._rusty.is_visible_in_tree() and main.hud._rusty_says.text.contains("Rusty"), "Rusty is on the launch screen with a greeting")
+	check(main.hud._mission_rows[0].text.begins_with("•") and main.hud._mission_rewards[2].text.begins_with("+"), "the three missions are listed on the launch screen")
+	sv.missions = [{"type": "distance", "target": 5, "reward": 77, "zone": 0}, sv.missions[1], sv.missions[2]]
+	main.hud.refresh_shop(main.last_result)
+	var sc0: float = sv.scrap
+	main.hud._launch_btn.pressed.emit()
+	fly_main(main)
+	check(main.last_result["missions"].size() >= 1 and main.last_result["mission_bonus"] >= 77 and main.last_result["rusty"] != "", "a flight completes the mission and Rusty comments")
+	check(sv.scrap == sc0 + main.last_result["earned"] and main.hud._result.text.contains("MISSION DONE") and main.hud._rusty_says.text.begins_with("Rusty: "), "the reward is paid and shown (%s)" % main.hud._rusty_says.text)
+	check(sv.missions.size() == 3 and sv.missions[0]["target"] != 5, "the finished mission was replaced")
+	sv.reset_all()
+	main._to_shop()
+
 	print("3. upgrades and the early game")
 	var base := avg_distance(lv())
 	check(base > 40.0 and base < 150.0, "a level-0 run is short (%.0f m)" % base)
@@ -540,6 +638,14 @@ func _initialize() -> void:
 	check(tp.last_copied_text.contains("gravity"), "Copy values fills the clipboard text")
 	tp.reset_defaults()
 	check(is_equal_approx(tn.gravity, g0) and tp.changed_text() == "(no changes)", "Reset restores the defaults")
+	sv.reset_all()
+	sv.ensure_missions(RandomNumberGenerator.new())
+	var old_missions: Array = sv.missions.duplicate(true)
+	var old_rewards := 0
+	for m in old_missions:
+		old_rewards += int(m["reward"])
+	tp.complete_all_missions()
+	check(sv.scrap == old_rewards and sv.missions.size() == 3, "?tune: Complete missions pays them and draws new ones (+%d)" % old_rewards)
 	tp.close()
 	check(not paused and not tp._panel.visible, "closing resumes")
 	check(same_world(before_nodes, snapshot(main)), "using the panel creates nothing")

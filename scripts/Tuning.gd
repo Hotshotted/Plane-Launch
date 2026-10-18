@@ -141,6 +141,10 @@ var skip_speed_kept := 0.97
 ## Longest flight (s): a safety stop so a bouncing glider can never fly forever.
 var max_flight_seconds := 240.0
 
+# ---------- Missions ----------
+## Multiplies every mission's scrap reward.
+var mission_reward_mult := 1.0
+
 # ---------- Economy ----------
 ## Scrap earned per meter flown.
 var scrap_per_meter := 0.5

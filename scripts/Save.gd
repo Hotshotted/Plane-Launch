@@ -10,7 +10,8 @@ signal changed
 ##   1: scrap, best_distance, runs, total_distance, levels
 ##   2: seen (which things have been explained by a first-time popup)
 ##   3: zone_best (farthest zone reached; each zone pays its bonus once)
-const VERSION := 3
+##   4: missions (three active), missions_done
+const VERSION := 4
 
 var path := "user://save.json"      # (tests point this somewhere else)
 var scrap := 0.0
@@ -18,6 +19,8 @@ var best_distance := 0.0            # meters, the farthest touchdown so far
 var runs := 0
 var total_distance := 0.0
 var levels := {}                    # upgrade id -> level
+var missions: Array = []             # three active missions (see Missions.gd)
+var missions_done := 0
 var zone_best := 0                  # index of the farthest zone ever reached
 var seen := {}                      # thing id -> true once its first-time popup was shown (saved when a run ends)
 
@@ -32,6 +35,8 @@ func _defaults() -> void:
 	levels = {}
 	seen = {}
 	zone_best = 0
+	missions = []
+	missions_done = 0
 	for u in Tuning.upgrades:
 		levels[u["id"]] = 0
 
@@ -55,12 +60,21 @@ func _migrate(d: Dictionary) -> Dictionary:
 		d["version"] = 1   # v0 -> v1: same fields, just stamped with a version
 		v = 1
 	if v < 2:
-		d["seen"] = {}     # v1 -> v2: nothing explained yet
+		if not d.has("seen"):
+			d["seen"] = {}     # v1 -> v2: nothing explained yet
 		d["version"] = 2
 		v = 2
 	if v < 3:
-		d["zone_best"] = 0  # v2 -> v3: no zones reached yet
+		if not d.has("zone_best"):
+			d["zone_best"] = 0  # v2 -> v3: no zones reached yet
 		d["version"] = 3
+		v = 3
+	if v < 4:
+		if not d.has("missions"):
+			d["missions"] = []  # v3 -> v4: missions are made on first load
+		if not d.has("missions_done"):
+			d["missions_done"] = 0
+		d["version"] = 4
 	return d
 
 func _apply(d: Dictionary) -> void:
@@ -73,6 +87,13 @@ func _apply(d: Dictionary) -> void:
 		for u in Tuning.upgrades:
 			levels[u["id"]] = clampi(int(lv.get(u["id"], 0)), 0, int(u["max"]))
 	zone_best = clampi(int(d.get("zone_best", 0)), 0, Zones.COUNT - 1)
+	missions_done = maxi(int(d.get("missions_done", 0)), 0)
+	var ms: Variant = d.get("missions", [])
+	if ms is Array:
+		for m in ms:
+			if m is Dictionary and Missions.TYPES.has(String(m.get("type", ""))):
+				missions.append({"type": String(m["type"]), "target": maxi(int(m.get("target", 1)), 1), "reward": maxi(int(m.get("reward", 5)), 0), "zone": clampi(int(m.get("zone", 0)), 0, Zones.COUNT - 1)})
+		missions = missions.slice(0, Missions.SLOTS)
 	var sn: Variant = d.get("seen", {})
 	if sn is Dictionary:
 		for k in sn:
@@ -81,7 +102,7 @@ func _apply(d: Dictionary) -> void:
 
 func to_dict() -> Dictionary:
 	return {"version": VERSION, "scrap": scrap, "best_distance": best_distance, "runs": runs,
-			"total_distance": total_distance, "levels": levels.duplicate(), "seen": seen.duplicate(), "zone_best": zone_best}
+			"total_distance": total_distance, "levels": levels.duplicate(), "seen": seen.duplicate(), "zone_best": zone_best, "missions": missions.duplicate(true), "missions_done": missions_done}
 
 func save_game() -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)
@@ -141,6 +162,11 @@ func claim_zones(zone_max: int) -> Dictionary:
 		n += 1
 	zone_best = maxi(zone_best, mini(zone_max, Zones.COUNT - 1))
 	return {"bonus": bonus, "new": n}
+
+## Keep three missions active (made from the player's progress).
+func ensure_missions(rng: RandomNumberGenerator) -> void:
+	if missions.size() < Missions.SLOTS:
+		Missions.fill(self, rng)
 
 func add_scrap(n: float) -> void:
 	scrap = maxf(scrap + n, 0.0)

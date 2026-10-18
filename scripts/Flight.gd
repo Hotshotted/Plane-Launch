@@ -104,6 +104,10 @@ var gen_x := 0.0
 var rng := RandomNumberGenerator.new()
 var bird_hits := 0
 var pad_bounces := 0
+var boosts_used := 0
+var gears_picked := 0
+var fan_entries := 0
+var stall_time := 0.0          # seconds spent stalled this run
 var max_altitude := 0.0
 var max_speed := 0.0
 var zone := 0                  # zone the glider is in
@@ -172,6 +176,10 @@ func reset(levels: Dictionary, seed_value: int = -1) -> void:
 	passed_best = false
 	bird_hits = 0
 	pad_bounces = 0
+	boosts_used = 0
+	gears_picked = 0
+	fan_entries = 0
+	stall_time = 0.0
 	max_altitude = 0.0
 	max_speed = 0.0
 	zone = 0
@@ -284,6 +292,8 @@ func _step_air(dt: float, hold: bool) -> void:
 	if st > 0.0 and stall_amount <= 0.0:
 		push_event(EV_STALL, x, y)
 	stall_amount = st
+	if st > 0.0:
+		stall_time += dt
 	cl_now = cl
 	var lift := lift_k_eff * s * s * cl
 	var drag := s * s * (drag0_eff + Tuning.drag_ind * cl * cl + Tuning.stall_drag * st)
@@ -311,6 +321,7 @@ func _step_air(dt: float, hold: bool) -> void:
 				in_fan = true
 				ay += Tuning.fan_accel * t_scale[i] * (1.0 - 0.6 * clampf(up / Tuning.fan_height, 0.0, 1.0))
 	if in_fan and not _was_in_fan:
+		fan_entries += 1
 		push_event(EV_FAN, x, y)
 	_was_in_fan = in_fan
 	vx += ax * dt
@@ -365,6 +376,8 @@ func _touch_things(dt: float) -> void:
 					var v := Tuning.scrap_nut_value if kind == K_NUT else Tuning.scrap_gear_value
 					picked_value += v
 					picked_count += 1
+					if kind == K_GEAR:
+						gears_picked += 1
 					push_event(EV_SCRAP, tx, t_y[i], v)
 				elif d2 < mag * mag and mag > pick_r:
 					var d := sqrt(d2)
@@ -444,6 +457,7 @@ func boost() -> bool:
 	if phase != PH_AIR or charges <= 0 or boost_left > 0.0:
 		return false
 	charges -= 1
+	boosts_used += 1
 	boost_left = Tuning.booster_time
 	push_event(EV_BOOST, x, y, roundi(thrust * Tuning.booster_time))
 	return true

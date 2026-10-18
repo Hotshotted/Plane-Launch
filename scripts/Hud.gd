@@ -9,6 +9,7 @@ signal launch_pressed
 signal buy_pressed(id: String)
 
 const POPUPS := 6
+const PANEL_H := 1240          # height of the between-runs panel (px)
 const MODE_SHOP := 0
 const MODE_FLIGHT := 1
 
@@ -48,6 +49,10 @@ var _shop_root: Control
 var _shop_scrap: Label
 var _shop_best: Label
 var _result: Label
+var _rusty: Rusty
+var _rusty_says: Label
+var _mission_rows: Array[Label] = []
+var _mission_rewards: Array[Label] = []
 var _row_name: Array[Label] = []
 var _row_effect: Array[Label] = []
 var _row_btn: Array[Button] = []
@@ -206,11 +211,11 @@ func _build_shop() -> void:
 	add_child(_shop_root)
 	var panel := PanelContainer.new()
 	panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	panel.offset_top = -1090
+	panel.offset_top = -PANEL_H
 	panel.add_theme_stylebox_override("panel", _style(Color(0.13, 0.15, 0.2, 0.97), Color.BLACK, 36, 6))
 	_shop_root.add_child(panel)
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 12)
+	col.add_theme_constant_override("separation", 8)
 	panel.add_child(col)
 	var head := HBoxContainer.new()
 	_shop_scrap = _label(54, HORIZONTAL_ALIGNMENT_LEFT, 0)
@@ -222,17 +227,36 @@ func _build_shop() -> void:
 	head.add_child(_shop_best)
 	col.add_child(head)
 	_shop_bar = _make_bar_inline(col)
-	_result = _label(36, HORIZONTAL_ALIGNMENT_CENTER, 0)
+	var talk := HBoxContainer.new()
+	talk.add_theme_constant_override("separation", 14)
+	talk.custom_minimum_size = Vector2(0, 150)
+	talk.clip_contents = true
+	col.add_child(talk)
+	_rusty = Rusty.new()
+	_rusty.custom_minimum_size = Vector2(130, 130)
+	_rusty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	talk.add_child(_rusty)
+	var say := VBoxContainer.new()
+	say.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	say.add_theme_constant_override("separation", 2)
+	talk.add_child(say)
+	_result = _label(27, HORIZONTAL_ALIGNMENT_LEFT, 0)
 	_result.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_result.custom_minimum_size = Vector2(0, 100)
 	_result.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	col.add_child(_result)
+	say.add_child(_result)
+	_rusty_says = _label(27, HORIZONTAL_ALIGNMENT_LEFT, 0)
+	_rusty_says.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_rusty_says.modulate = Color(1.0, 0.85, 0.55)
+	say.add_child(_rusty_says)
 	_btn_afford = _style(Color(0.2, 0.62, 0.3), Color.BLACK, 16, 4)
 	_btn_poor = _style(Color(0.3, 0.3, 0.34), Color.BLACK, 16, 4)
 	_btn_max = _style(Color(0.55, 0.45, 0.15), Color.BLACK, 16, 4)
 	for u in Tuning.upgrades:
 		var row := PanelContainer.new()
-		row.add_theme_stylebox_override("panel", _style(Color(0.2, 0.23, 0.3), Color.BLACK, 16, 4))
+		var rs := _style(Color(0.2, 0.23, 0.3), Color.BLACK, 16, 4)
+		rs.content_margin_top = 3
+		rs.content_margin_bottom = 3
+		row.add_theme_stylebox_override("panel", rs)
 		var h := HBoxContainer.new()
 		h.add_theme_constant_override("separation", 14)
 		row.add_child(h)
@@ -240,13 +264,13 @@ func _build_shop() -> void:
 		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		v.add_theme_constant_override("separation", 0)
 		h.add_child(v)
-		var nm := _label(40, HORIZONTAL_ALIGNMENT_LEFT, 0)
-		var ef := _label(30, HORIZONTAL_ALIGNMENT_LEFT, 0)
+		var nm := _label(34, HORIZONTAL_ALIGNMENT_LEFT, 0)
+		var ef := _label(24, HORIZONTAL_ALIGNMENT_LEFT, 0)
 		ef.modulate = Color(0.75, 0.9, 1.0)
 		v.add_child(nm)
 		v.add_child(ef)
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(250, 92)
+		b.custom_minimum_size = Vector2(250, 70)
 		b.add_theme_font_size_override("font_size", 38)
 		for st in ["normal", "hover", "pressed", "disabled", "focus"]:
 			b.add_theme_stylebox_override(st, _btn_afford)
@@ -258,10 +282,26 @@ func _build_shop() -> void:
 		_row_effect.append(ef)
 		_row_btn.append(b)
 		_row_ids.append(u["id"])
+	var mtitle := _label(28, HORIZONTAL_ALIGNMENT_LEFT, 0)
+	mtitle.text = "MISSIONS  (from Rusty)"
+	mtitle.modulate = Color(0.8, 0.9, 1.0)
+	col.add_child(mtitle)
+	for i in Missions.SLOTS:
+		var mrow := HBoxContainer.new()
+		var mt := _label(30, HORIZONTAL_ALIGNMENT_LEFT, 0)
+		mt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mt.clip_text = true
+		var mr := _label(30, HORIZONTAL_ALIGNMENT_RIGHT, 0)
+		mr.modulate = Color(1, 0.85, 0.3)
+		mrow.add_child(mt)
+		mrow.add_child(mr)
+		col.add_child(mrow)
+		_mission_rows.append(mt)
+		_mission_rewards.append(mr)
 	_launch_btn = Button.new()
 	_launch_btn.text = "LAUNCH!"
-	_launch_btn.custom_minimum_size = Vector2(0, 150)
-	_launch_btn.add_theme_font_size_override("font_size", 70)
+	_launch_btn.custom_minimum_size = Vector2(0, 130)
+	_launch_btn.add_theme_font_size_override("font_size", 64)
 	var ls := _style(Color(0.95, 0.55, 0.1), Color.BLACK, 30, 6)
 	for st in ["normal", "hover", "pressed", "focus"]:
 		_launch_btn.add_theme_stylebox_override(st, ls)
@@ -341,6 +381,11 @@ func prewarm_show(on: bool) -> void:
 	_hint.visible = on
 	_banner.visible = on
 	if on:
+		_rusty_says.text = "Rusty: " + Rusty.GREETING
+		_result.text = "LANDED  1,234 m   NEW BEST!\n+99 scrap (88 distance, 7 from 3 pickups, 4 zone bonus)\nFarthest zone: Cheese Moon\nMISSION DONE: Collect 40 scrap in one flight  +45"
+		for i in Missions.SLOTS:
+			_mission_rows[i].text = "• Reach the River without boosting"
+			_mission_rewards[i].text = "+120"
 		_banner.text = "NEW ZONE!\nCLOUD KINGDOM\n+1,900 scrap"
 		_banner.modulate = Color(1, 1, 1)
 		_zone_label.text = "CHEESE MOON"
@@ -516,7 +561,9 @@ func refresh_shop(last: Dictionary) -> void:
 		_shop_bar_key = sk
 		_set_bar(_shop_bar, Save.zone_best, _zone_progress(Save.best_distance, Save.zone_best))
 	if last.is_empty():
-		_result.text = "Hold the screen to pitch up, let go to dive.\nDive for speed, climb to trade it for height. Too slow and you stall!" if Save.runs == 0 else ""
+		_result.text = "Dive for speed, climb to trade it for height.\nToo slow and you stall!" if Save.runs == 0 else ""
+		_result.modulate = Color(1, 1, 1)
+		_rusty_says.text = ("Rusty: " + Rusty.GREETING) if Save.runs == 0 else "Rusty: Back for more? Let's see those missions."
 	else:
 		var t := "LANDED  %s m" % Tuning.fmt(last["distance"])
 		if last["new_best"]:
@@ -524,9 +571,21 @@ func refresh_shop(last: Dictionary) -> void:
 		t += "\n+%s scrap  (%s distance, %s from %d pickups" % [Tuning.fmt(last["earned"]), Tuning.fmt(last["dist_scrap"]), Tuning.fmt(last["picked"]), last["picked_count"]]
 		if last["zone_bonus"] > 0:
 			t += ", %s zone bonus" % Tuning.fmt(last["zone_bonus"])
-		t += ")\nFarthest zone: %s" % Tuning.zone_name(last["zone"])
+		if last["mission_bonus"] > 0:
+			t += ", %s missions" % Tuning.fmt(last["mission_bonus"])
+		t += ")  ·  %s" % Tuning.zone_name(last["zone"])
+		for m in last["missions"]:
+			t += "\nMISSION DONE: %s  +%s" % [m["text"], Tuning.fmt(m["reward"])]
 		_result.text = t
 		_result.modulate = Color(1, 0.95, 0.5) if last["new_best"] else Color(1, 1, 1)
+		_rusty_says.text = "Rusty: " + last["rusty"]
+	for i in Missions.SLOTS:
+		if i < Save.missions.size():
+			_mission_rows[i].text = "• " + Missions.describe(Save.missions[i])
+			_mission_rewards[i].text = "+%s" % Tuning.fmt(Save.missions[i]["reward"])
+		else:
+			_mission_rows[i].text = ""
+			_mission_rewards[i].text = ""
 	for i in _row_ids.size():
 		var id := _row_ids[i]
 		var u := Tuning.upgrade_def(id)

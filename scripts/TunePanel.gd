@@ -200,6 +200,10 @@ func build() -> void:
 	unlock_zones.pressed.connect(func(): Save.zone_best = Zones.COUNT - 1; Save.save_game(); _out.text = "All zones unlocked (no bonus paid).")
 	unlock_zones.set_meta("debug", "unlock_zones")
 	unlock_row.add_child(unlock_zones)
+	var complete_missions := _make_button("Complete missions", 34)
+	complete_missions.pressed.connect(complete_all_missions)
+	complete_missions.set_meta("debug", "complete_missions")
+	unlock_row.add_child(complete_missions)
 	column.add_child(unlock_row)
 	_out = _make_label("", 26, HORIZONTAL_ALIGNMENT_LEFT)
 	_out.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -261,6 +265,17 @@ func _on_slider(value: float, property: String) -> void:
 func _on_toggle(on: bool, property: String) -> void:
 	Tuning.set(property, on)
 	changed.emit(property)
+
+## Debug: pay out every active mission and draw three new ones.
+func complete_all_missions() -> void:
+	var total := 0
+	for m in Save.missions:
+		total += int(m["reward"])
+	Save.missions_done += Save.missions.size()
+	Save.missions = []
+	Save.ensure_missions(RandomNumberGenerator.new())
+	Save.add_scrap(float(total))
+	_out.text = "Missions completed: +%d scrap." % total
 
 ## Put every tuned value back to its default (as captured when the panel was built).
 func reset_defaults() -> void:

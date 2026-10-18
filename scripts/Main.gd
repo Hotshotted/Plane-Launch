@@ -158,6 +158,7 @@ func _to_shop(snap: bool = true) -> void:
 	_finish_timer = -1.0
 	world.clear_particles()
 	world.show_aura = false
+	Save.ensure_missions(rng)
 	flight.reset(Save.levels)
 	flight.best_x = Save.best_distance
 	_set_best_text()
@@ -191,14 +192,25 @@ func launch() -> void:
 	flight.launch()
 
 func _finish_run() -> void:
+	var best_before := Save.best_distance
 	var claim := Save.claim_zones(flight.zone_max)
-	var earned: int = flight.scrap_total() + int(claim["bonus"])
+	var stats := {"distance": flight.distance, "picked_value": flight.picked_value, "pad_bounces": flight.pad_bounces, "skips": flight.skips,
+			"fan_entries": flight.fan_entries, "boosts_used": flight.boosts_used, "gears_picked": flight.gears_picked,
+			"bird_hits": flight.bird_hits, "zone_max": flight.zone_max}
+	var done := Missions.evaluate(Save, stats, rng)
+	var mission_bonus := 0
+	for md in done:
+		mission_bonus += int(md["reward"])
+	var earned: int = flight.scrap_total() + int(claim["bonus"]) + mission_bonus
 	var new_best := Save.record_run(flight.distance, earned)
+	var line := Rusty.comment({"new_best": new_best, "distance": flight.distance, "best_before": best_before, "mission_done": not done.is_empty(),
+			"new_zone": claim["new"] > 0, "stall_time": flight.stall_time, "bird_hits": flight.bird_hits, "run": Save.runs})
 	runs_this_session += 1
 	last_result = {
 		"distance": floorf(flight.distance), "earned": earned, "dist_scrap": flight.scrap_for_distance(),
 		"picked": flight.picked_value, "picked_count": flight.picked_count, "new_best": new_best,
 		"zone_bonus": claim["bonus"], "zone": flight.zone_max, "new_zones": claim["new"],
+		"mission_bonus": mission_bonus, "missions": done, "rusty": line,
 	}
 	_finish_timer = 0.0
 
@@ -356,9 +368,9 @@ func _update_camera(dt: float) -> void:
 	if state == STATE_SHOP:
 		# Frame the ramp in the upper part of the screen, above the shop panel.
 		var ramp_h := flight.ramp_top.y + 6.0
-		var avail := 640.0
+		var ground_sy := size.y - Hud.PANEL_H - 15.0   # just above the panel
+		var avail := ground_sy - 140.0
 		tp = minf(Tuning.view_scale, avail / ramp_h)
-		var ground_sy := minf(790.0, avail + 150.0)
 		tb = (ground_sy - size.y) / tp
 		tx = flight.ramp_top.x - 6.0
 		kx = 6.0
