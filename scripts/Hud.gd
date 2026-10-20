@@ -1,9 +1,14 @@
 class_name Hud
 extends CanvasLayer
-## Everything on top of the world: the flight HUD (distance, best, scrap, boost button), the
-## between-runs panel (last result, the upgrade shop, LAUNCH), the start-up splash, the build stamp
-## and the ?perf readout. Every node is created once in _ready(); afterwards things are only shown,
-## hidden or get new text (and text is only set when the number it shows changed).
+## All UI. One primary thing per screen, big and high contrast; everything else smaller and quieter,
+## or behind a tap:
+##   FLIGHT   distance (huge), a quiet best-distance line, the boost button with its charges, brief
+##            popups / toasts. Nothing else.
+##   LAUNCH   the glider on its launcher (the world), Rusty's mission clipboard, four nav buttons and a
+##            huge LAUNCH button. Upgrades, garage, style and daily open as a sheet over the clipboard.
+##   RESULTS  a card over the world: the distance, then scrap, missions done, new missions, Rusty.
+## Three text sizes (HERO / BODY / SMALL) and one accent colour (orange; gold only for scrap).
+## Every node is created once in _ready(); afterwards things are only shown, hidden or get new text.
 
 signal launch_pressed
 signal buy_pressed(id: String)
@@ -14,83 +19,115 @@ signal daily_pressed
 signal ad_double_pressed
 signal ad_boost_pressed
 
+const HERO := 120
+const BODY := 44
+const SMALL := 28
+const PANEL_H := 800           # height of the launch screen's bottom stack (the world gets the rest)
 const POPUPS := 6
-const PANEL_H := 1300          # height of the between-runs panel (px)
 const MODE_SHOP := 0
 const MODE_FLIGHT := 1
 
+# palette: ink on dark, one accent, gold for scrap, red only for danger
+const C_PANEL := Color(0.09, 0.11, 0.16, 0.97)
+const C_CARD := Color(0.16, 0.19, 0.26)
+const C_TEXT := Color(0.97, 0.97, 1.0)
+const C_MUTED := Color(0.64, 0.70, 0.80)
+const C_ACCENT := Color(0.99, 0.60, 0.12)
+const C_GOLD := Color(1.0, 0.82, 0.28)
+const C_OFF := Color(0.26, 0.29, 0.36)
+const C_DANGER := Color(1.0, 0.36, 0.30)
+const C_PAPER := Color(0.97, 0.94, 0.84)
+const C_INK := Color(0.20, 0.16, 0.10)
+const C_INK_SOFT := Color(0.47, 0.40, 0.30)
+
 var mode := MODE_SHOP
 
-# flight HUD
+# ---- flight ----
 var _flight_root: Control
 var _dist: Label
 var _best: Label
-var _scrap: Label
-var _gauge: Label
+var _toast: Label
+var _toast_born := -10.0
 var _stall: Label
 var _hint: Label
-var _boost_panel: PanelContainer
-var _boost_pips: Label       # charges, shown beside the button
-var _boost_style: StyleBoxFlat
-var _zone_label: Label
 var _banner: Label
 var _banner_born := -10.0
-var _flight_bar := {}
-var _shop_bar := {}
-var _bar_key := -1
-var _shop_bar_key := -1
-var _last_zone_name := ""
+var _boost_panel: PanelContainer
+var _boost_pips: Label
+var _boost_style: StyleBoxFlat
 var _pop_labels: Array[Label] = []
 var _pop_born := PackedFloat32Array()
 var _pop_y := PackedFloat32Array()
 var _next_pop := 0
 var _last_dist := -1
-var _last_scrap := -1
-var _last_gauge := -1
 var _last_pips := -1
-var _last_pips_max := -1
 
-# shop
+# ---- launch screen ----
 var _shop_root: Control
 var _shop_scrap: Label
 var _shop_best: Label
-var _result: Label
+var _zone_label: Label
+var _shop_bar := {}
+var _shop_bar_key := -1
+var _clip: PanelContainer
 var _rusty: Rusty
 var _rusty_says: Label
 var _mission_rows: Array[Label] = []
 var _mission_rewards: Array[Label] = []
+var _mission_counts: Array[Label] = []
+var _mission_fills: Array[ColorRect] = []
+var _mission_new: Array[Label] = []
+var _nav_buttons: Array[Button] = []
+var _launch_btn: Button
+var _ad_boost_btn: Button
+
+# ---- sheet (upgrades / garage / style / daily) ----
+var _sheet: PanelContainer
+var _sheet_title: Label
+var _sub_tabs: HBoxContainer
+var _sub_buttons: Array[Button] = []
+var _tab_pages: Array[VBoxContainer] = []
+var _tab := 0
 var _row_name: Array[Label] = []
 var _row_effect: Array[Label] = []
 var _row_btn: Array[Button] = []
 var _row_ids: Array[String] = []
-var _tab_buttons: Array[Button] = []
-var _tab_pages: Array[VBoxContainer] = []
-var _tab := 0
 var _frame_rows: Array[Dictionary] = []
 var _launcher_rows: Array[Dictionary] = []
-var _aim_key := -1
+var _style_cat := 0
+var _style_cat_buttons: Array[Button] = []
+var _style_rows: Array[Dictionary] = []
 var _daily_title: Label
 var _daily_info: Label
 var _daily_btn: Button
-var _daily_label: Label              # in flight: the target
+var _sb_accent: StyleBoxFlat
+var _sb_off: StyleBoxFlat
+var _sb_done: StyleBoxFlat
+var _sb_card: StyleBoxFlat
+
+# ---- results ----
+var _results: Control
+var _res_caption: Label
+var _res_dist: Label
+var _res_badge: Label
+var _res_scrap: Label
+var _res_detail: Label
+var _res_mcap: Label
+var _res_missions: Label
+var _res_new: Label
+var _res_rusty_pic: Rusty
+var _res_rusty: Label
+var _res_continue: Button
 var _ad_double_btn: Button
-var _ad_boost_btn: Button
+
+# ---- splash / ad / debug ----
+var _splash: Control
 var _ad_screen: Control
 var _ad_title: Label
 var _ad_sub: Label
 var _ad_left := 0.0
 var _ad_callback := Callable()
 var ad_active := false
-var _style_cat := 0                 # 0 paint, 1 hats, 2 trails
-var _style_cat_buttons: Array[Button] = []
-var _style_rows: Array[Dictionary] = []
-var _launch_btn: Button
-var _btn_afford: StyleBoxFlat
-var _btn_poor: StyleBoxFlat
-var _btn_max: StyleBoxFlat
-
-# splash / debug
-var _splash: Control
 var _stamp: Label
 var _perf_label: Label
 var _perf_worst := 0.0
@@ -99,12 +136,16 @@ var _perf_shown := 0.0
 var _hitch_count := 0
 var _hitch_log: Array[String] = []
 var _perf_extra := ""
+var _aim_key := -1
 var _time := 0.0
 
 func _ready() -> void:
 	layer = 10
+	_make_styles()
 	_build_flight_hud()
-	_build_shop()
+	_build_launch_screen()
+	_build_sheet()
+	_build_results()
 	_build_splash()
 	_build_ad_screen()
 	move_child(_ad_screen, _splash.get_index())   # the splash stays on top of it during the pre-warm
@@ -112,19 +153,16 @@ func _ready() -> void:
 	set_mode(MODE_SHOP)
 
 # ---------------------------------------------------------------------------------------------
-# Building
+# Building blocks
 # ---------------------------------------------------------------------------------------------
 
-func _label(size: int, align: HorizontalAlignment = HORIZONTAL_ALIGNMENT_CENTER, outline: int = 8) -> Label:
-	var l := Label.new()
-	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_color_override("font_outline_color", Color.BLACK)
-	l.add_theme_constant_override("outline_size", outline)
-	l.horizontal_alignment = align
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return l
+func _make_styles() -> void:
+	_sb_accent = _box(C_ACCENT, Color.BLACK, 18, 4)
+	_sb_off = _box(C_OFF, Color.BLACK, 18, 4)
+	_sb_done = _box(Color(0.12, 0.14, 0.20), C_OFF, 18, 3)
+	_sb_card = _box(C_CARD, Color.BLACK, 18, 3)
 
-func _style(bg: Color, border: Color = Color.BLACK, radius: int = 18, bw: int = 4) -> StyleBoxFlat:
+func _box(bg: Color, border: Color = Color.BLACK, radius: int = 18, bw: int = 4) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
 	s.bg_color = bg
 	s.border_color = border
@@ -136,76 +174,98 @@ func _style(bg: Color, border: Color = Color.BLACK, radius: int = 18, bw: int = 
 	s.content_margin_bottom = 10
 	return s
 
+func _label(size: int, color: Color = C_TEXT, align: HorizontalAlignment = HORIZONTAL_ALIGNMENT_CENTER, outline: int = 0) -> Label:
+	var l := Label.new()
+	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_color_override("font_color", color)
+	if outline > 0:
+		l.add_theme_color_override("font_outline_color", Color.BLACK)
+		l.add_theme_constant_override("outline_size", outline)
+	l.horizontal_alignment = align
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
 func _full(c: Control) -> void:
 	c.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+func _style_button(b: Button, st: StyleBoxFlat, text_color: Color = C_TEXT) -> void:
+	for sn in ["normal", "hover", "pressed", "disabled", "focus"]:
+		b.add_theme_stylebox_override(sn, st)
+	for cn in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color", "font_focus_color"]:
+		b.add_theme_color_override(cn, text_color)
+
+func _button(text: String, size: int, min_h: float, st: StyleBoxFlat, text_color: Color = C_TEXT) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(0, min_h)
+	b.add_theme_font_size_override("font_size", size)
+	b.focus_mode = Control.FOCUS_NONE
+	_style_button(b, st, text_color)
+	return b
+
+## Set a button to the accent (something to do), off (can't yet) or done (already so) look.
+func _look(b: Button, kind: int, text: String) -> void:
+	b.text = text
+	match kind:
+		0:
+			_style_button(b, _sb_accent, Color(0.1, 0.07, 0.02))
+			b.disabled = false
+		1:
+			_style_button(b, _sb_off, C_MUTED)
+			b.disabled = false
+		_:
+			_style_button(b, _sb_done, C_MUTED)
+			b.disabled = true
+
+# ---------------------------------------------------------------------------------------------
+# FLIGHT: distance, best, boost, brief popups
+# ---------------------------------------------------------------------------------------------
 
 func _build_flight_hud() -> void:
 	_flight_root = Control.new()
 	_full(_flight_root)
 	add_child(_flight_root)
-	_dist = _label(120)
+	_dist = _label(HERO, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER, 14)
 	_dist.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_dist.offset_top = 40
+	_dist.offset_top = 44
 	_flight_root.add_child(_dist)
-	_best = _label(38)
+	_best = _label(SMALL, C_MUTED, HORIZONTAL_ALIGNMENT_CENTER, 6)
 	_best.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_best.offset_top = 165
-	_best.modulate = Color(1, 0.95, 0.6)
+	_best.offset_top = 188
 	_flight_root.add_child(_best)
-	_zone_label = _label(40)
-	_zone_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_zone_label.offset_top = 212
-	_zone_label.modulate = Color(0.8, 0.95, 1.0)
-	_flight_root.add_child(_zone_label)
-	_flight_bar = _make_bar(_flight_root, 268.0)
-	_daily_label = _label(34)
-	_daily_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_daily_label.offset_top = 300
-	_daily_label.modulate = Color(0.6, 0.95, 1.0)
-	_daily_label.visible = false
-	_flight_root.add_child(_daily_label)
-	_banner = _label(80)
-	_banner.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	_banner.offset_left = -520
-	_banner.offset_right = 520
-	_banner.offset_top = -560
-	_banner.offset_bottom = -300
-	_banner.visible = false
-	_flight_root.add_child(_banner)
-	_scrap = _label(44, HORIZONTAL_ALIGNMENT_RIGHT)
-	_scrap.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
-	_scrap.offset_left = -420
-	_scrap.offset_right = -30
-	_scrap.offset_top = 330
-	_scrap.modulate = Color(1, 0.85, 0.3)
-	_flight_root.add_child(_scrap)
-	_gauge = _label(32, HORIZONTAL_ALIGNMENT_LEFT, 6)
-	_gauge.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	_gauge.offset_left = 30
-	_gauge.offset_top = 330
-	_gauge.modulate = Color(1, 1, 1, 0.85)
-	_flight_root.add_child(_gauge)
-	_stall = _label(90)
+	_toast = _label(BODY, C_ACCENT, HORIZONTAL_ALIGNMENT_CENTER, 6)
+	_toast.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	_toast.offset_top = 240
+	_toast.visible = false
+	_flight_root.add_child(_toast)
+	_stall = _label(HERO, C_DANGER, HORIZONTAL_ALIGNMENT_CENTER, 12)
 	_stall.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	_stall.offset_left = -400
 	_stall.offset_right = 400
 	_stall.offset_top = -420
-	_stall.offset_bottom = -300
+	_stall.offset_bottom = -280
 	_stall.text = "STALL!"
-	_stall.modulate = Color(1, 0.3, 0.25)
 	_stall.visible = false
 	_flight_root.add_child(_stall)
-	_hint = _label(46)
+	_banner = _label(BODY, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER, 7)
+	_banner.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_banner.offset_left = -520
+	_banner.offset_right = 520
+	_banner.offset_top = -560
+	_banner.offset_bottom = -380
+	_banner.visible = false
+	_flight_root.add_child(_banner)
+	_hint = _label(BODY, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER, 8)
 	_hint.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
 	_hint.offset_left = -480
 	_hint.offset_right = 480
-	_hint.offset_top = -360
-	_hint.offset_bottom = -220
+	_hint.offset_top = -420
+	_hint.offset_bottom = -280
 	_hint.text = "HOLD = nose up\nRELEASE = nose down"
 	_hint.visible = false
 	_flight_root.add_child(_hint)
-	# the boost button: bottom-right, handled by Main's input (rect hit test), never eats touches itself
+	# the boost button: bottom-right; Main's input hit-tests its rect, it never eats touches itself
 	_boost_panel = PanelContainer.new()
 	_boost_panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 	_boost_panel.offset_left = -270
@@ -213,417 +273,43 @@ func _build_flight_hud() -> void:
 	_boost_panel.offset_top = -300
 	_boost_panel.offset_bottom = -70
 	_boost_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_boost_style = _style(Color(0.95, 0.5, 0.1), Color.BLACK, 40, 6)
+	_boost_style = _box(C_ACCENT, Color.BLACK, 40, 6)
 	_boost_panel.add_theme_stylebox_override("panel", _boost_style)
-	var bv := VBoxContainer.new()
-	bv.alignment = BoxContainer.ALIGNMENT_CENTER
-	bv.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_boost_panel.add_child(bv)
-	var bl := _label(48)
+	var bl := _label(BODY, Color(0.1, 0.07, 0.02))
 	bl.text = "BOOST"
-	bv.add_child(bl)
+	bl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_boost_panel.add_child(bl)
 	_flight_root.add_child(_boost_panel)
-	_boost_pips = _label(52, HORIZONTAL_ALIGNMENT_RIGHT)
+	_boost_pips = _label(BODY, C_ACCENT, HORIZONTAL_ALIGNMENT_RIGHT, 8)
 	_boost_pips.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 	_boost_pips.offset_left = -640
 	_boost_pips.offset_right = -290
-	_boost_pips.offset_top = -230
-	_boost_pips.offset_bottom = -140
-	_boost_pips.add_theme_color_override("font_color", Color(1.0, 0.8, 0.25))
+	_boost_pips.offset_top = -210
+	_boost_pips.offset_bottom = -150
 	_flight_root.add_child(_boost_pips)
 	for i in POPUPS:
-		var p := _label(56)
+		var p := _label(BODY, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER, 6)
 		p.visible = false
-		p.size = Vector2(500, 80)
+		p.size = Vector2(560, 70)
 		_flight_root.add_child(p)
 		_pop_labels.append(p)
 	_pop_born.resize(POPUPS)
 	_pop_y.resize(POPUPS)
 
-func _build_shop() -> void:
-	_shop_root = Control.new()
-	_full(_shop_root)
-	add_child(_shop_root)
-	var panel := PanelContainer.new()
-	panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	panel.offset_top = -PANEL_H
-	panel.add_theme_stylebox_override("panel", _style(Color(0.13, 0.15, 0.2, 0.97), Color.BLACK, 36, 6))
-	_shop_root.add_child(panel)
-	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 8)
-	panel.add_child(col)
-	var head := HBoxContainer.new()
-	_shop_scrap = _label(54, HORIZONTAL_ALIGNMENT_LEFT, 0)
-	_shop_scrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_shop_scrap.modulate = Color(1, 0.85, 0.3)
-	_shop_best = _label(40, HORIZONTAL_ALIGNMENT_RIGHT, 0)
-	_shop_best.modulate = Color(1, 0.95, 0.6)
-	head.add_child(_shop_scrap)
-	head.add_child(_shop_best)
-	col.add_child(head)
-	_shop_bar = _make_bar_inline(col)
-	var talk := HBoxContainer.new()
-	talk.add_theme_constant_override("separation", 14)
-	talk.custom_minimum_size = Vector2(0, 130)
-	talk.clip_contents = true
-	col.add_child(talk)
-	_rusty = Rusty.new()
-	_rusty.custom_minimum_size = Vector2(120, 120)
-	_rusty.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	talk.add_child(_rusty)
-	var say := VBoxContainer.new()
-	say.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	say.add_theme_constant_override("separation", 2)
-	talk.add_child(say)
-	_result = _label(27, HORIZONTAL_ALIGNMENT_LEFT, 0)
-	_result.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_result.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	say.add_child(_result)
-	_rusty_says = _label(27, HORIZONTAL_ALIGNMENT_LEFT, 0)
-	_rusty_says.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_rusty_says.modulate = Color(1.0, 0.85, 0.55)
-	say.add_child(_rusty_says)
-	_btn_afford = _style(Color(0.2, 0.62, 0.3), Color.BLACK, 16, 4)
-	_btn_poor = _style(Color(0.3, 0.3, 0.34), Color.BLACK, 16, 4)
-	_btn_max = _style(Color(0.55, 0.45, 0.15), Color.BLACK, 16, 4)
-	# tabs: UPGRADES | FRAMES | LAUNCHERS
-	var tabs := HBoxContainer.new()
-	tabs.add_theme_constant_override("separation", 8)
-	col.add_child(tabs)
-	var holder := Control.new()   # the pages share one fixed-height area
-	holder.custom_minimum_size = Vector2(0, 5 * 78 + 4 * 8 + 62)
-	holder.clip_contents = true
-	col.add_child(holder)
-	for ti in 5:
-		var tb := Button.new()
-		tb.text = ["UPGRADES", "FRAMES", "LAUNCH", "STYLE", "DAILY"][ti]
-		tb.custom_minimum_size = Vector2(0, 64)
-		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		tb.add_theme_font_size_override("font_size", 26)
-		tb.focus_mode = Control.FOCUS_NONE
-		tb.pressed.connect(show_tab.bind(ti))
-		tabs.add_child(tb)
-		_tab_buttons.append(tb)
-		var page := VBoxContainer.new()
-		page.add_theme_constant_override("separation", 8)
-		page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		page.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		holder.add_child(page)
-		_tab_pages.append(page)
-	for u in Tuning.upgrades:
-		var r := _make_row(_tab_pages[0])
-		r["btn"].pressed.connect(_on_buy.bind(u["id"]))
-		_row_name.append(r["name"])
-		_row_effect.append(r["eff"])
-		_row_btn.append(r["btn"])
-		_row_ids.append(u["id"])
-	for f in Tuning.frames:
-		var r2 := _make_row(_tab_pages[1])
-		r2["btn"].pressed.connect(func(): frame_pressed.emit(f["id"]))
-		_frame_rows.append(r2)
-	for l in Tuning.launchers:
-		var r3 := _make_row(_tab_pages[2])
-		r3["btn"].pressed.connect(func(): launcher_pressed.emit(l["id"]))
-		_launcher_rows.append(r3)
-	# STYLE: a category switch and five rows that show paints, hats or trails
-	var cats := HBoxContainer.new()
-	cats.add_theme_constant_override("separation", 8)
-	_tab_pages[3].add_child(cats)
-	for ci in 3:
-		var cb := Button.new()
-		cb.text = Cosmetics.KIND_NAMES[Cosmetics.KINDS[ci]]
-		cb.custom_minimum_size = Vector2(0, 54)
-		cb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		cb.add_theme_font_size_override("font_size", 26)
-		cb.focus_mode = Control.FOCUS_NONE
-		cb.pressed.connect(set_style_cat.bind(ci))
-		cats.add_child(cb)
-		_style_cat_buttons.append(cb)
-	for k in 5:
-		var sr := _make_row(_tab_pages[3])
-		sr["btn"].pressed.connect(_on_style_row.bind(k))
-		_style_rows.append(sr)
-	# DAILY: today's target and a button that starts today's seeded world
-	var dp: VBoxContainer = _tab_pages[4]
-	_daily_title = _label(40, HORIZONTAL_ALIGNMENT_CENTER, 0)
-	_daily_title.modulate = Color(0.6, 0.95, 1.0)
-	dp.add_child(_daily_title)
-	_daily_info = _label(32, HORIZONTAL_ALIGNMENT_CENTER, 0)
-	_daily_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_daily_info.custom_minimum_size = Vector2(0, 230)
-	_daily_info.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	dp.add_child(_daily_info)
-	_daily_btn = Button.new()
-	_daily_btn.text = "START DAILY LAUNCH"
-	_daily_btn.custom_minimum_size = Vector2(0, 100)
-	_daily_btn.add_theme_font_size_override("font_size", 44)
-	_set_button_style(_daily_btn, _style(Color(0.15, 0.5, 0.8), Color.BLACK, 24, 5))
-	_daily_btn.focus_mode = Control.FOCUS_NONE
-	_daily_btn.pressed.connect(func(): daily_pressed.emit())
-	dp.add_child(_daily_btn)
-	show_tab(0)
-	set_style_cat(0)
-	var mtitle := _label(28, HORIZONTAL_ALIGNMENT_LEFT, 0)
-	mtitle.text = "MISSIONS  (from Rusty)"
-	mtitle.modulate = Color(0.8, 0.9, 1.0)
-	col.add_child(mtitle)
-	for i in Missions.SLOTS:
-		var mrow := HBoxContainer.new()
-		var mt := _label(30, HORIZONTAL_ALIGNMENT_LEFT, 0)
-		mt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		mt.clip_text = true
-		var mr := _label(30, HORIZONTAL_ALIGNMENT_RIGHT, 0)
-		mr.modulate = Color(1, 0.85, 0.3)
-		mrow.add_child(mt)
-		mrow.add_child(mr)
-		col.add_child(mrow)
-		_mission_rows.append(mt)
-		_mission_rewards.append(mr)
-	var ad_row := HBoxContainer.new()
-	ad_row.add_theme_constant_override("separation", 10)
-	col.add_child(ad_row)
-	_ad_double_btn = _ad_button("AD: DOUBLE LAST SCRAP")
-	_ad_double_btn.pressed.connect(func(): ad_double_pressed.emit())
-	ad_row.add_child(_ad_double_btn)
-	_ad_boost_btn = _ad_button("AD: FREE BOOST CHARGE")
-	_ad_boost_btn.pressed.connect(func(): ad_boost_pressed.emit())
-	ad_row.add_child(_ad_boost_btn)
-	_launch_btn = Button.new()
-	_launch_btn.text = "LAUNCH!"
-	_launch_btn.custom_minimum_size = Vector2(0, 130)
-	_launch_btn.add_theme_font_size_override("font_size", 64)
-	var ls := _style(Color(0.95, 0.55, 0.1), Color.BLACK, 30, 6)
-	for st in ["normal", "hover", "pressed", "focus"]:
-		_launch_btn.add_theme_stylebox_override(st, ls)
-	_launch_btn.focus_mode = Control.FOCUS_NONE
-	_launch_btn.pressed.connect(func(): launch_pressed.emit())
-	col.add_child(_launch_btn)
-
-## One shop row: a name, a one-line description, and a button on the right.
-func _make_row(page: Control) -> Dictionary:
-	var row := PanelContainer.new()
-	var rs := _style(Color(0.2, 0.23, 0.3), Color.BLACK, 16, 4)
-	rs.content_margin_top = 3
-	rs.content_margin_bottom = 3
-	row.add_theme_stylebox_override("panel", rs)
-	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 14)
-	row.add_child(h)
-	var v := VBoxContainer.new()
-	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	v.add_theme_constant_override("separation", 0)
-	h.add_child(v)
-	var nm := _label(34, HORIZONTAL_ALIGNMENT_LEFT, 0)
-	var ef := _label(24, HORIZONTAL_ALIGNMENT_LEFT, 0)
-	ef.modulate = Color(0.75, 0.9, 1.0)
-	ef.clip_text = true
-	v.add_child(nm)
-	v.add_child(ef)
-	var b := Button.new()
-	b.custom_minimum_size = Vector2(250, 60)
-	b.add_theme_font_size_override("font_size", 34)
-	_set_button_style(b, _btn_afford)
-	b.focus_mode = Control.FOCUS_NONE
-	h.add_child(b)
-	page.add_child(row)
-	return {"name": nm, "eff": ef, "btn": b}
-
-func _set_button_style(b: Button, st: StyleBoxFlat) -> void:
-	for sn in ["normal", "hover", "pressed", "disabled", "focus"]:
-		b.add_theme_stylebox_override(sn, st)
-
-func set_style_cat(i: int) -> void:
-	_style_cat = i
-	for k in _style_cat_buttons.size():
-		_style_cat_buttons[k].modulate = Color(1, 1, 1) if k == i else Color(0.6, 0.65, 0.75)
-	_refresh_style()
-
-func _on_style_row(k: int) -> void:
-	var kind: String = Cosmetics.KINDS[_style_cat]
-	cosmetic_pressed.emit(kind, Cosmetics.list_of(kind)[k]["id"])
-
-func _refresh_style() -> void:
-	var kind: String = Cosmetics.KINDS[_style_cat]
-	var list := Cosmetics.list_of(kind)
-	for k in _style_rows.size():
-		var r: Dictionary = _style_rows[k]
-		var d: Dictionary = list[k]
-		var on: bool = Save.equipped(kind) == d["id"]
-		r["name"].text = d["name"] + ("   ✓" if on else "")
-		r["eff"].text = "Whiskers' hat" if kind == "hat" else ("Paint job" if kind == "paint" else "Trail")
-		var b: Button = r["btn"]
-		if on:
-			b.text = "EQUIPPED"
-			b.disabled = true
-			_set_button_style(b, _btn_max)
-		elif Save.owns_cosmetic(kind, d["id"]):
-			b.text = "EQUIP"
-			b.disabled = false
-			_set_button_style(b, _btn_afford)
-		else:
-			b.text = Tuning.fmt(float(d["cost"]))
-			b.disabled = false
-			_set_button_style(b, _btn_afford if Save.scrap >= float(d["cost"]) else _btn_poor)
-
-func show_tab(i: int) -> void:
-	_tab = i
-	for k in _tab_pages.size():
-		_tab_pages[k].visible = k == i
-		_tab_buttons[k].modulate = Color(1, 1, 1) if k == i else Color(0.6, 0.65, 0.75)
-
-func _ad_button(text: String) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.custom_minimum_size = Vector2(0, 60)
-	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	b.add_theme_font_size_override("font_size", 25)
-	b.focus_mode = Control.FOCUS_NONE
-	_set_button_style(b, _style(Color(0.35, 0.25, 0.55), Color.BLACK, 14, 4))
-	return b
-
-func _make_bar_inline(col: VBoxContainer) -> Dictionary:
-	var holder := Control.new()
-	holder.custom_minimum_size = Vector2(0, 30)
-	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col.add_child(holder)
-	return _make_bar(holder, 2.0)
-
-func _build_splash() -> void:
-	_splash = Control.new()
-	_full(_splash)
-	_splash.mouse_filter = Control.MOUSE_FILTER_STOP
-	_splash.visible = false
-	var bg := ColorRect.new()
-	bg.color = Color(0.1, 0.12, 0.17, 0.97)
-	_full(bg)
-	_splash.add_child(bg)
-	var t := _label(100)
-	_full(t)
-	t.text = "JUNKYARD\nLAUNCH"
-	t.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_splash.add_child(t)
-	add_child(_splash)
-
-func _build_ad_screen() -> void:
-	_ad_screen = Control.new()
-	_full(_ad_screen)
-	_ad_screen.mouse_filter = Control.MOUSE_FILTER_STOP
-	_ad_screen.visible = false
-	var bg := ColorRect.new()
-	bg.color = Color(0.04, 0.04, 0.08, 0.98)
-	_full(bg)
-	_ad_screen.add_child(bg)
-	var box := VBoxContainer.new()
-	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	box.offset_left = -480
-	box.offset_right = 480
-	box.offset_top = -260
-	box.offset_bottom = 260
-	box.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_ad_screen.add_child(box)
-	_ad_title = _label(100)
-	_ad_title.text = "AD PLAYING"
-	box.add_child(_ad_title)
-	_ad_sub = _label(42)
-	_ad_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_ad_sub.modulate = Color(0.8, 0.85, 1.0)
-	box.add_child(_ad_sub)
-	add_child(_ad_screen)
-
-func _build_stamp() -> void:
-	_stamp = _label(26, HORIZONTAL_ALIGNMENT_LEFT, 6)
-	_stamp.text = "%s  %s" % [BuildInfo.COMMIT, BuildInfo.TIME]
-	var flags := DebugFlags.summary()
-	if flags != "":
-		_stamp.text += "\n" + flags
-	_stamp.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
-	_stamp.offset_left = 14
-	_stamp.offset_top = -48 if flags == "" else -84
-	_stamp.modulate = Color(1, 1, 1, 0.55)
-	add_child(_stamp)
-	if DebugFlags.perf_enabled():
-		_perf_label = _label(26, HORIZONTAL_ALIGNMENT_LEFT, 6)
-		_perf_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-		_perf_label.offset_left = 14
-		_perf_label.offset_top = 14
-		_perf_label.modulate = Color(0.6, 1, 0.6, 0.9)
-		add_child(_perf_label)
-
-# ---------------------------------------------------------------------------------------------
-# Modes
-# ---------------------------------------------------------------------------------------------
-
-func set_mode(m: int) -> void:
-	mode = m
-	_flight_root.visible = m == MODE_FLIGHT
-	_shop_root.visible = m == MODE_SHOP
-	_stall.visible = false
-	for p in _pop_labels:
-		p.visible = false
-	_last_dist = -1
-	_last_scrap = -1
-	_last_gauge = -1
-	_last_pips = -1
-	_bar_key = -1
-	_shop_bar_key = -1
-	_banner.visible = false
-	_hint.text = "HOLD = nose up\nRELEASE = nose down"
-	_aim_key = -1
-
-func show_splash(on: bool) -> void:
-	_splash.visible = on
-
-## Pre-warm: draw every part of the UI at once (under the splash) so fonts and styles are set up.
-func prewarm_show(on: bool) -> void:
-	_flight_root.visible = on
-	_shop_root.visible = on
-	_stall.visible = on
-	_hint.visible = on
-	_banner.visible = on
-	_ad_screen.visible = on   # (drawn under the splash)
-	if on:
-		_rusty_says.text = "Rusty: " + Rusty.GREETING
-		_result.text = "LANDED  1,234 m   NEW BEST!\n+99 scrap (88 distance, 7 from 3 pickups, 4 zone bonus)\nFarthest zone: Cheese Moon\nMISSION DONE: Collect 40 scrap in one flight  +45"
-		for i in Missions.SLOTS:
-			_mission_rows[i].text = "• Reach the River without boosting"
-			_mission_rewards[i].text = "+120"
-		_banner.text = "NEW ZONE!\nCLOUD KINGDOM\n+1,900 scrap"
-		_banner.modulate = Color(1, 1, 1)
-		_zone_label.text = "CHEESE MOON"
-		_set_bar(_flight_bar, 3, 0.5)
-		_set_bar(_shop_bar, 3, 0.5)
-	for p in _pop_labels:
-		p.visible = on
-		p.text = "BOUNCE! +12 NEW BEST!"
-	if on:
-		_dist.text = "1234 m"
-		_best.text = "BEST 1234 m"
-		_scrap.text = "SCRAP +99"
-		_gauge.text = "SPD 99  ALT 99"
-		_boost_pips.text = "●●●●○○"
-	else:
-		_hint.visible = false
-
-# ---------------------------------------------------------------------------------------------
-# Flight HUD updates
-# ---------------------------------------------------------------------------------------------
-
+## The best-distance line under the distance ("" hides it).
 func set_best(best: float) -> void:
 	_best.text = "BEST %s m" % Tuning.fmt(best) if best > 0.0 else ""
 
-func set_flight(distance: float, scrap_value: int, speed: float, alt: float, stalled: bool, charges: int, charges_max: int, boosting: bool) -> void:
+## During the Daily Launch the same quiet line shows the target instead.
+func set_daily_target(target: int) -> void:
+	if target > 0:
+		_best.text = "DAILY TARGET %s m" % Tuning.fmt(target)
+
+func set_flight(distance: float, charges: int, charges_max: int, boosting: bool, stalled: bool) -> void:
 	var d := int(distance)
 	if d != _last_dist:
 		_last_dist = d
 		_dist.text = "%d m" % d
-	if scrap_value != _last_scrap:
-		_last_scrap = scrap_value
-		_scrap.text = "SCRAP +%d" % scrap_value
-	var g := int(speed) * 1000 + mini(int(alt), 999)
-	if g != _last_gauge:
-		_last_gauge = g
-		_gauge.text = "SPD %d  ALT %d" % [int(speed), int(alt)]
 	_stall.visible = stalled and (int(_time * 8.0) % 2 == 0)
 	var pips_key := charges * 100 + charges_max
 	if pips_key != _last_pips:
@@ -634,7 +320,7 @@ func set_flight(distance: float, scrap_value: int, speed: float, alt: float, sta
 		_boost_pips.text = s
 	_boost_panel.visible = charges_max > 0
 	_boost_pips.visible = charges_max > 0
-	_boost_style.bg_color = Color(1.0, 0.85, 0.2) if boosting else (Color(0.95, 0.5, 0.1) if charges > 0 else Color(0.4, 0.38, 0.36))
+	_boost_style.bg_color = Color(1.0, 0.85, 0.3) if boosting else (C_ACCENT if charges > 0 else C_OFF)
 
 func show_hint(on: bool) -> void:
 	_hint.visible = on
@@ -651,73 +337,248 @@ func popup(text: String, pos: Vector2, color: Color) -> void:
 	_next_pop = (_next_pop + 1) % POPUPS
 	var l := _pop_labels[i]
 	l.text = text
-	l.modulate = color
-	l.size = Vector2(500, 80)
-	l.position = pos - Vector2(250, 40)
+	l.add_theme_color_override("font_color", color)
+	l.size = Vector2(560, 70)
+	l.position = pos - Vector2(280, 35)
+	l.modulate = Color.WHITE
 	l.visible = true
 	_pop_born[i] = _time
 	_pop_y[i] = l.position.y
 
+## A short line under the distance ("Bounces 2/3"); replaced by the next one, gone after about two seconds.
+func toast(text: String) -> void:
+	_toast.text = text
+	_toast.modulate = Color.WHITE
+	_toast.visible = true
+	_toast_born = _time
+
+## Big centred banner ("NEW ZONE!" ...), fading after about two seconds.
+func banner(text: String, color: Color) -> void:
+	_banner.text = text
+	_banner.add_theme_color_override("font_color", color)
+	_banner.modulate = Color.WHITE
+	_banner.visible = true
+	_banner_born = _time
+
+## Slingshot: the aim read-out and hint while pulling back.
+func show_aim(on: bool, power: float, angle: float) -> void:
+	if not on:
+		if _aim_key != -1:
+			_aim_key = -1
+			_hint.text = "HOLD = nose up\nRELEASE = nose down"
+			_hint.visible = false
+		return
+	var key := int(power * 100.0) * 1000 + int(angle)
+	if key != _aim_key:
+		_aim_key = key
+		_hint.text = "PULL BACK, THEN LET GO!\nPOWER %d%%   ANGLE %d°" % [int(power * 100.0), int(angle)]
+	_hint.visible = true
+
 # ---------------------------------------------------------------------------------------------
-# Zone progress bar (one segment per zone) and banner
+# LAUNCH SCREEN: the glider (world), the clipboard, nav, LAUNCH
 # ---------------------------------------------------------------------------------------------
 
-## A row of Zones.COUNT segments, each a dark box with a fill that grows left to right. Built once.
+func _build_launch_screen() -> void:
+	_shop_root = Control.new()
+	_full(_shop_root)
+	add_child(_shop_root)
+	# a quiet top line: scrap, farthest zone, best (on a soft dark strip so it reads over clouds)
+	var scrim := ColorRect.new()
+	scrim.color = Color(0.03, 0.05, 0.1, 0.45)
+	scrim.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	scrim.offset_bottom = 112
+	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_shop_root.add_child(scrim)
+	var top := HBoxContainer.new()
+	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	top.offset_left = 28
+	top.offset_right = -28
+	top.offset_top = 24
+	top.offset_bottom = 84
+	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_shop_root.add_child(top)
+	_shop_scrap = _label(BODY, C_GOLD, HORIZONTAL_ALIGNMENT_LEFT, 8)
+	_shop_scrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(_shop_scrap)
+	_zone_label = _label(SMALL, C_MUTED, HORIZONTAL_ALIGNMENT_CENTER, 6)
+	_zone_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_zone_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	top.add_child(_zone_label)
+	_shop_best = _label(SMALL, C_MUTED, HORIZONTAL_ALIGNMENT_RIGHT, 6)
+	_shop_best.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_shop_best.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	top.add_child(_shop_best)
+	_shop_bar = _make_bar(_shop_root, 92.0)
+	_ad_boost_btn = _button("▶ FREE BOOST", SMALL, 56, _sb_done, C_MUTED)
+	_ad_boost_btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	_ad_boost_btn.offset_left = -330
+	_ad_boost_btn.offset_right = -28
+	_ad_boost_btn.offset_top = 126
+	_ad_boost_btn.offset_bottom = 182
+	_ad_boost_btn.pressed.connect(func(): ad_boost_pressed.emit())
+	_shop_root.add_child(_ad_boost_btn)
+	# the bottom stack: clipboard, nav, LAUNCH
+	var stack := VBoxContainer.new()
+	stack.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	stack.offset_left = 24
+	stack.offset_right = -24
+	stack.offset_bottom = -24
+	stack.offset_top = -PANEL_H + 24
+	stack.add_theme_constant_override("separation", 16)
+	stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_shop_root.add_child(stack)
+	_clip = PanelContainer.new()
+	var paper := _box(C_PAPER, Color(0.35, 0.25, 0.15), 22, 6)
+	paper.content_margin_top = 14
+	paper.content_margin_bottom = 16
+	_clip.add_theme_stylebox_override("panel", paper)
+	_clip.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	stack.add_child(_clip)
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 8)
+	_clip.add_child(cv)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 14)
+	cv.add_child(head)
+	_rusty = Rusty.new()
+	_rusty.custom_minimum_size = Vector2(88, 88)
+	_rusty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(_rusty)
+	var hv := VBoxContainer.new()
+	hv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hv.add_theme_constant_override("separation", 0)
+	head.add_child(hv)
+	var ct := _label(SMALL, C_INK_SOFT, HORIZONTAL_ALIGNMENT_LEFT)
+	ct.text = "RUSTY'S MISSIONS"
+	hv.add_child(ct)
+	_rusty_says = _label(SMALL, C_INK, HORIZONTAL_ALIGNMENT_LEFT)
+	_rusty_says.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_rusty_says.custom_minimum_size = Vector2(0, 58)
+	hv.add_child(_rusty_says)
+	for i in Missions.SLOTS:
+		var mv := VBoxContainer.new()
+		mv.add_theme_constant_override("separation", 2)
+		cv.add_child(mv)
+		var line := HBoxContainer.new()
+		mv.add_child(line)
+		var desc := _label(BODY, C_INK, HORIZONTAL_ALIGNMENT_LEFT)
+		desc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		desc.clip_text = true
+		line.add_child(desc)
+		var tag := _label(SMALL, C_ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
+		tag.text = "NEW"
+		tag.visible = false
+		line.add_child(tag)
+		var reward := _label(BODY, Color(0.62, 0.44, 0.04), HORIZONTAL_ALIGNMENT_RIGHT)
+		reward.custom_minimum_size = Vector2(130, 0)
+		line.add_child(reward)
+		var barline := HBoxContainer.new()
+		barline.add_theme_constant_override("separation", 12)
+		mv.add_child(barline)
+		var bar := Control.new()
+		bar.custom_minimum_size = Vector2(0, 18)
+		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var bg := ColorRect.new()
+		bg.color = Color(0.82, 0.77, 0.64)
+		_full(bg)
+		bar.add_child(bg)
+		var fill := ColorRect.new()
+		fill.color = C_ACCENT
+		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		fill.anchor_top = 0.0
+		fill.anchor_bottom = 1.0
+		fill.anchor_left = 0.0
+		fill.anchor_right = 0.0
+		fill.offset_left = 0
+		fill.offset_right = 0
+		fill.offset_top = 0
+		fill.offset_bottom = 0
+		bar.add_child(fill)
+		barline.add_child(bar)
+		var cnt := _label(SMALL, C_INK_SOFT, HORIZONTAL_ALIGNMENT_RIGHT)
+		cnt.custom_minimum_size = Vector2(260, 0)
+		barline.add_child(cnt)
+		_mission_rows.append(desc)
+		_mission_rewards.append(reward)
+		_mission_counts.append(cnt)
+		_mission_fills.append(fill)
+		_mission_new.append(tag)
+	var nav := HBoxContainer.new()
+	nav.add_theme_constant_override("separation", 12)
+	stack.add_child(nav)
+	for entry in [["UPGRADES", 0], ["GARAGE", 1], ["STYLE", 3], ["DAILY", 4]]:
+		var nb := _button(entry[0], BODY, 92, _sb_card)
+		nb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nb.pressed.connect(show_tab.bind(entry[1]))
+		nav.add_child(nb)
+		_nav_buttons.append(nb)
+	_launch_btn = _button("LAUNCH!", HERO, 190, _sb_accent, Color(0.1, 0.07, 0.02))
+	_launch_btn.add_theme_font_size_override("font_size", 96)
+	_launch_btn.pressed.connect(func(): launch_pressed.emit())
+	stack.add_child(_launch_btn)
+
+# ---- zone progress bar (one thin segment per zone) ----
+
 func _make_bar(parent: Control, top: float) -> Dictionary:
 	var row := HBoxContainer.new()
 	row.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	row.offset_left = 28
+	row.offset_right = -28
 	row.offset_top = top
-	row.offset_bottom = top + 26.0
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 5)
+	row.offset_bottom = top + 14.0
+	row.add_theme_constant_override("separation", 4)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(row)
 	var fills: Array[ColorRect] = []
 	for i in Zones.COUNT:
 		var seg := Control.new()
-		seg.custom_minimum_size = Vector2(86, 26)
+		seg.custom_minimum_size = Vector2(0, 14)
+		seg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		seg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var edge := ColorRect.new()
 		edge.color = Color.BLACK
 		_full(edge)
 		seg.add_child(edge)
 		var bg := ColorRect.new()
-		bg.color = Color(0.16, 0.18, 0.24, 0.9)
+		bg.color = C_OFF
 		_full(bg)
-		bg.offset_left = 3
-		bg.offset_top = 3
-		bg.offset_right = -3
-		bg.offset_bottom = -3
+		bg.offset_left = 2
+		bg.offset_top = 2
+		bg.offset_right = -2
+		bg.offset_bottom = -2
 		seg.add_child(bg)
 		var fill := ColorRect.new()
-		fill.color = Color(1.0, 0.8, 0.25)
+		fill.color = C_ACCENT
 		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		fill.anchor_top = 0.0
 		fill.anchor_bottom = 1.0
 		fill.anchor_left = 0.0
 		fill.anchor_right = 0.0
-		fill.offset_left = 3
-		fill.offset_top = 3
-		fill.offset_bottom = -3
+		fill.offset_left = 2
+		fill.offset_top = 2
+		fill.offset_bottom = -2
 		fill.offset_right = 0
 		seg.add_child(fill)
 		row.add_child(seg)
 		fills.append(fill)
 	return {"fills": fills}
 
-## Fill the bar: zones up to `reached` are gold, the next one fills with `progress` (0..1) in cyan.
+## Zones up to `reached` are filled, the next one fills with `progress` (0..1).
 func _set_bar(bar: Dictionary, reached: int, progress: float) -> void:
 	var fills: Array = bar["fills"]
 	for i in Zones.COUNT:
 		var f: ColorRect = fills[i]
 		if i <= reached:
 			f.anchor_right = 1.0
-			f.offset_right = -3
-			f.color = Color(1.0, 0.8, 0.25)
+			f.offset_right = -2
+			f.color = C_ACCENT
 		elif i == reached + 1:
 			f.anchor_right = clampf(progress, 0.0, 1.0)
-			f.offset_right = -3 if progress >= 1.0 else 0
-			f.color = Color(0.4, 0.9, 1.0)
+			f.offset_right = -2 if progress >= 1.0 else 0
+			f.color = C_ACCENT.darkened(0.35)
 		else:
 			f.anchor_right = 0.0
 			f.offset_right = 0
@@ -728,127 +589,421 @@ func _zone_progress(distance: float, reached: int) -> float:
 	var b := Tuning.zone_start(nxt)
 	return clampf((distance - a) / maxf(b - a, 1.0), 0.0, 1.0)
 
-## In flight: the zone name and the bar (only touched when something visible changed).
-func set_zone(zone: int, zone_max: int, zone_best: int, distance: float) -> void:
-	var nm := Tuning.zone_name(zone)
-	if nm != _last_zone_name:
-		_last_zone_name = nm
-		_zone_label.text = nm.to_upper()
-	var reached := maxi(zone_max, zone_best)
-	var key := reached * 1000 + int(_zone_progress(distance, reached) * 50.0)
-	if key != _bar_key:
-		_bar_key = key
-		_set_bar(_flight_bar, reached, _zone_progress(distance, reached))
-
-## Big centred banner ("NEW ZONE!" ...), fading after about two seconds.
-func banner(text: String, color: Color) -> void:
-	_banner.text = text
-	_banner.modulate = color
-	_banner.visible = true
-	_banner_born = _time
-
 # ---------------------------------------------------------------------------------------------
-# Shop
+# SHEET: upgrades | garage (frames, launchers) | style | daily
 # ---------------------------------------------------------------------------------------------
 
-func _on_buy(id: String) -> void:
-	buy_pressed.emit(id)
+func _build_sheet() -> void:
+	_sheet = PanelContainer.new()
+	_sheet.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	_sheet.offset_left = 24
+	_sheet.offset_right = -24
+	_sheet.offset_bottom = -24 - 190 - 4
+	_sheet.offset_top = -24 - 190 - 4 - 790
+	_sheet.add_theme_stylebox_override("panel", _box(Color(0.09, 0.11, 0.16, 1.0), Color.BLACK, 30, 6))
+	_sheet.visible = false
+	_shop_root.add_child(_sheet)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 12)
+	_sheet.add_child(col)
+	var head := HBoxContainer.new()
+	col.add_child(head)
+	_sheet_title = _label(BODY, C_TEXT, HORIZONTAL_ALIGNMENT_LEFT)
+	_sheet_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_sheet_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	head.add_child(_sheet_title)
+	var close := _button("CLOSE", SMALL, 64, _sb_card)
+	close.custom_minimum_size = Vector2(180, 64)
+	close.pressed.connect(close_sheet)
+	head.add_child(close)
+	_sub_tabs = HBoxContainer.new()
+	_sub_tabs.add_theme_constant_override("separation", 10)
+	col.add_child(_sub_tabs)
+	for k in 2:
+		var sb := _button(["FRAMES", "LAUNCHERS"][k], SMALL, 60, _sb_card)
+		sb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sb.pressed.connect(show_tab.bind(k + 1))
+		_sub_tabs.add_child(sb)
+		_sub_buttons.append(sb)
+	var holder := Control.new()
+	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	holder.custom_minimum_size = Vector2(0, 500)
+	holder.clip_contents = true
+	col.add_child(holder)
+	for ti in 5:
+		var page := VBoxContainer.new()
+		page.add_theme_constant_override("separation", 10)
+		page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		page.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder.add_child(page)
+		_tab_pages.append(page)
+	for u in Tuning.upgrades:
+		var r := _make_row(_tab_pages[0])
+		r["btn"].pressed.connect(func(): buy_pressed.emit(u["id"]))
+		_row_name.append(r["name"])
+		_row_effect.append(r["eff"])
+		_row_btn.append(r["btn"])
+		_row_ids.append(u["id"])
+	for f in Tuning.frames:
+		var r2 := _make_row(_tab_pages[1])
+		r2["btn"].pressed.connect(func(): frame_pressed.emit(f["id"]))
+		_frame_rows.append(r2)
+	for l in Tuning.launchers:
+		var r3 := _make_row(_tab_pages[2])
+		r3["btn"].pressed.connect(func(): launcher_pressed.emit(l["id"]))
+		_launcher_rows.append(r3)
+	# STYLE: a category switch and five rows that show paints, hats or trails
+	var cats := HBoxContainer.new()
+	cats.add_theme_constant_override("separation", 10)
+	_tab_pages[3].add_child(cats)
+	for ci in 3:
+		var cb := _button(Cosmetics.KIND_NAMES[Cosmetics.KINDS[ci]], SMALL, 60, _sb_card)
+		cb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cb.pressed.connect(set_style_cat.bind(ci))
+		cats.add_child(cb)
+		_style_cat_buttons.append(cb)
+	for k in 5:
+		var sr := _make_row(_tab_pages[3])
+		sr["btn"].pressed.connect(_on_style_row.bind(k))
+		_style_rows.append(sr)
+	# DAILY: today's target and a button that starts today's seeded world
+	var dp: VBoxContainer = _tab_pages[4]
+	_daily_title = _label(BODY, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER)
+	dp.add_child(_daily_title)
+	_daily_info = _label(SMALL, C_MUTED, HORIZONTAL_ALIGNMENT_CENTER)
+	_daily_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_daily_info.custom_minimum_size = Vector2(0, 300)
+	_daily_info.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	dp.add_child(_daily_info)
+	_daily_btn = _button("START DAILY LAUNCH", BODY, 110, _sb_accent, Color(0.1, 0.07, 0.02))
+	_daily_btn.pressed.connect(func(): daily_pressed.emit())
+	dp.add_child(_daily_btn)
+	set_style_cat(0)
+	show_tab(0)
+	_sheet.visible = false
 
-## Refresh every text in the shop from the save. `last` = the last run's result, or empty.
+## One sheet row: a name, a quiet one-line description, and a button on the right.
+func _make_row(page: Control) -> Dictionary:
+	var row := PanelContainer.new()
+	var rs := _box(C_CARD, Color.BLACK, 16, 3)
+	rs.content_margin_top = 6
+	rs.content_margin_bottom = 6
+	row.add_theme_stylebox_override("panel", rs)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 14)
+	row.add_child(h)
+	var v := VBoxContainer.new()
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	v.add_theme_constant_override("separation", 0)
+	h.add_child(v)
+	var nm := _label(BODY, C_TEXT, HORIZONTAL_ALIGNMENT_LEFT)
+	nm.clip_text = true
+	var ef := _label(SMALL, C_MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	ef.clip_text = true
+	v.add_child(nm)
+	v.add_child(ef)
+	var b := _button("", BODY, 78, _sb_accent, Color(0.1, 0.07, 0.02))
+	b.custom_minimum_size = Vector2(250, 78)
+	h.add_child(b)
+	page.add_child(row)
+	return {"name": nm, "eff": ef, "btn": b}
+
+func show_tab(i: int) -> void:
+	_tab = i
+	_sheet.visible = true
+	for k in _tab_pages.size():
+		_tab_pages[k].visible = k == i
+	_sheet_title.text = ["UPGRADES", "GARAGE", "GARAGE", "STYLE", "DAILY LAUNCH"][i]
+	_sub_tabs.visible = i == 1 or i == 2
+	for k in _sub_buttons.size():
+		var on := (k + 1) == i
+		_style_button(_sub_buttons[k], _sb_accent if on else _sb_card, Color(0.1, 0.07, 0.02) if on else C_TEXT)
+
+func close_sheet() -> void:
+	_sheet.visible = false
+
+func set_style_cat(i: int) -> void:
+	_style_cat = i
+	for k in _style_cat_buttons.size():
+		var on := k == i
+		_style_button(_style_cat_buttons[k], _sb_accent if on else _sb_card, Color(0.1, 0.07, 0.02) if on else C_TEXT)
+	_refresh_style()
+
+func _on_style_row(k: int) -> void:
+	var kind: String = Cosmetics.KINDS[_style_cat]
+	cosmetic_pressed.emit(kind, Cosmetics.list_of(kind)[k]["id"])
+
+func _refresh_style() -> void:
+	var kind: String = Cosmetics.KINDS[_style_cat]
+	var list := Cosmetics.list_of(kind)
+	for k in _style_rows.size():
+		var r: Dictionary = _style_rows[k]
+		var d: Dictionary = list[k]
+		var on: bool = Save.equipped(kind) == d["id"]
+		r["name"].text = d["name"] + ("   ✓" if on else "")
+		r["eff"].text = "Whiskers' hat" if kind == "hat" else ("Paint job" if kind == "paint" else "Trail")
+		if on:
+			_look(r["btn"], 2, "WORN")
+		elif Save.owns_cosmetic(kind, d["id"]):
+			_look(r["btn"], 0, "WEAR")
+		else:
+			_look(r["btn"], 0 if Save.scrap >= float(d["cost"]) else 1, Tuning.fmt(float(d["cost"])))
+
+# ---------------------------------------------------------------------------------------------
+# RESULTS: a card over the world
+# ---------------------------------------------------------------------------------------------
+
+func _build_results() -> void:
+	_results = Control.new()
+	_full(_results)
+	_results.mouse_filter = Control.MOUSE_FILTER_STOP
+	_results.visible = false
+	_shop_root.add_child(_results)
+	var dim := ColorRect.new()
+	dim.color = Color(0.02, 0.03, 0.06, 0.84)
+	_full(dim)
+	_results.add_child(dim)
+	var card := PanelContainer.new()
+	card.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	card.offset_left = -470
+	card.offset_right = 470
+	card.grow_vertical = Control.GROW_DIRECTION_BOTH
+	card.add_theme_stylebox_override("panel", _box(C_PANEL, Color.BLACK, 36, 6))
+	_results.add_child(card)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	card.add_child(v)
+	_res_caption = _label(SMALL, C_MUTED)
+	v.add_child(_res_caption)
+	_res_dist = _label(HERO, C_TEXT)
+	v.add_child(_res_dist)
+	_res_badge = _label(BODY, C_ACCENT)
+	v.add_child(_res_badge)
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(0, 14)
+	v.add_child(gap)
+	_res_scrap = _label(BODY, C_GOLD)
+	v.add_child(_res_scrap)
+	_res_detail = _label(SMALL, C_MUTED)
+	_res_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_res_detail)
+	var gap2 := Control.new()
+	gap2.custom_minimum_size = Vector2(0, 14)
+	v.add_child(gap2)
+	_res_mcap = _label(SMALL, C_ACCENT)
+	_res_mcap.text = "MISSION DONE"
+	v.add_child(_res_mcap)
+	_res_missions = _label(BODY, C_TEXT)
+	_res_missions.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_res_missions)
+	_res_new = _label(SMALL, C_MUTED)
+	_res_new.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_res_new)
+	var gap3 := Control.new()
+	gap3.custom_minimum_size = Vector2(0, 14)
+	v.add_child(gap3)
+	var rr := HBoxContainer.new()
+	rr.add_theme_constant_override("separation", 14)
+	v.add_child(rr)
+	_res_rusty_pic = Rusty.new()
+	_res_rusty_pic.custom_minimum_size = Vector2(100, 100)
+	_res_rusty_pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rr.add_child(_res_rusty_pic)
+	_res_rusty = _label(SMALL, C_MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	_res_rusty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_res_rusty.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_res_rusty.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	rr.add_child(_res_rusty)
+	_ad_double_btn = _button("▶ DOUBLE SCRAP", SMALL, 64, _sb_done, C_MUTED)
+	_ad_double_btn.pressed.connect(func(): ad_double_pressed.emit())
+	v.add_child(_ad_double_btn)
+	_res_continue = _button("CONTINUE", BODY, 140, _sb_accent, Color(0.1, 0.07, 0.02))
+	_res_continue.pressed.connect(func(): show_results(false))
+	v.add_child(_res_continue)
+
+func show_results(on: bool) -> void:
+	_results.visible = on
+
+func results_visible() -> bool:
+	return _results.visible
+
+## All the text on the results card, for tests and logs.
+func result_text() -> String:
+	return "\n".join([_res_caption.text, _res_dist.text, _res_badge.text, _res_scrap.text, _res_detail.text, (_res_mcap.text if _res_mcap.visible else ""), _res_missions.text, _res_new.text, _res_rusty.text])
+
+func _fill_results(last: Dictionary) -> void:
+	var daily: Dictionary = last.get("daily", {})
+	_res_caption.text = "DAILY LAUNCH" if daily.size() > 0 else "LANDED"
+	_res_dist.text = "%s m" % Tuning.fmt(last["distance"])
+	_res_badge.text = "NEW BEST!" if last["new_best"] else ""
+	_res_badge.visible = last["new_best"]
+	_res_scrap.text = "+%s scrap" % Tuning.fmt(last["earned"])
+	var parts: Array[String] = ["%s distance" % Tuning.fmt(last["dist_scrap"]), "%s from %d pickups" % [Tuning.fmt(last["picked"]), last["picked_count"]]]
+	if last["zone_bonus"] > 0:
+		parts.append("%s zone bonus" % Tuning.fmt(last["zone_bonus"]))
+	if last["mission_bonus"] > 0:
+		parts.append("%s missions" % Tuning.fmt(last["mission_bonus"]))
+	var detail := "  ·  ".join(parts) + "\nFarthest zone: %s" % Tuning.zone_name(last["zone"])
+	if daily.size() > 0:
+		detail += "\nDAILY: %s / %s m%s" % [Tuning.fmt(daily["distance"]), Tuning.fmt(daily["target"]), "   BONUS +" + Tuning.fmt(daily["bonus"]) if daily["bonus"] > 0 else ""]
+	_res_detail.text = detail
+	var ml := ""
+	for m in last["missions"]:
+		ml += "%s✓ %s   +%s" % ["\n" if ml != "" else "", m["text"], Tuning.fmt(m["reward"])]
+	_res_missions.text = ml
+	_res_missions.visible = ml != ""
+	_res_mcap.visible = ml != ""
+	var nl := ""
+	for t in last.get("new_missions", []):
+		nl += ("\n" if nl != "" else "") + "New mission: " + String(t)
+	_res_new.text = nl
+	_res_new.visible = nl != ""
+	_res_rusty.text = "Rusty: " + last["rusty"]
+
+# ---------------------------------------------------------------------------------------------
+# Refreshing every text from the save
+# ---------------------------------------------------------------------------------------------
+
+## Refresh the launch screen, the sheet and the results card from the save. `last` = the last flight's result
+## or empty; `boost_ready` = a free boost from an ad is waiting.
 func refresh_shop(last: Dictionary, boost_ready: bool = false) -> void:
 	_shop_scrap.text = "SCRAP  %s" % Tuning.fmt(Save.scrap)
 	_shop_best.text = "BEST  %s m" % Tuning.fmt(Save.best_distance)
+	_zone_label.text = Tuning.zone_name(Save.zone_best).to_upper()
 	var sk := Save.zone_best * 1000 + int(_zone_progress(Save.best_distance, Save.zone_best) * 50.0)
 	if sk != _shop_bar_key:
 		_shop_bar_key = sk
 		_set_bar(_shop_bar, Save.zone_best, _zone_progress(Save.best_distance, Save.zone_best))
 	if last.is_empty():
-		_result.text = "Dive for speed, climb to trade it for height.\nToo slow and you stall!" if Save.runs == 0 else ""
-		_result.modulate = Color(1, 1, 1)
-		_rusty_says.text = ("Rusty: " + Rusty.GREETING) if Save.runs == 0 else "Rusty: Back for more? Let's see those missions."
+		_rusty_says.text = ("Rusty: " + Rusty.GREETING) if Save.runs == 0 else "Rusty: Back for more? Beat these and I'll pay up."
 	else:
-		var t := "LANDED  %s m" % Tuning.fmt(last["distance"])
-		if last["new_best"]:
-			t += "   NEW BEST!"
-		t += "\n+%s scrap  (%s distance, %s from %d pickups" % [Tuning.fmt(last["earned"]), Tuning.fmt(last["dist_scrap"]), Tuning.fmt(last["picked"]), last["picked_count"]]
-		if last["zone_bonus"] > 0:
-			t += ", %s zone bonus" % Tuning.fmt(last["zone_bonus"])
-		if last["mission_bonus"] > 0:
-			t += ", %s missions" % Tuning.fmt(last["mission_bonus"])
-		t += ")  ·  %s" % Tuning.zone_name(last["zone"])
-		if last.get("daily", {}).size() > 0:
-			var dd: Dictionary = last["daily"]
-			t += "\nDAILY: %s / %s m%s" % [Tuning.fmt(dd["distance"]), Tuning.fmt(dd["target"]), "   BONUS +" + Tuning.fmt(dd["bonus"]) if dd["bonus"] > 0 else ""]
-		for m in last["missions"]:
-			t += "\nMISSION DONE: %s  +%s" % [m["text"], Tuning.fmt(m["reward"])]
-		_result.text = t
-		_result.modulate = Color(1, 0.95, 0.5) if last["new_best"] else Color(1, 1, 1)
+		_fill_results(last)
 		_rusty_says.text = "Rusty: " + last["rusty"]
-	_refresh_extras(last, boost_ready)
-	for i in Missions.SLOTS:
-		if i < Save.missions.size():
-			_mission_rows[i].text = "• " + Missions.describe(Save.missions[i])
-			_mission_rewards[i].text = "+%s" % Tuning.fmt(Save.missions[i]["reward"])
-		else:
-			_mission_rows[i].text = ""
-			_mission_rewards[i].text = ""
+	var affordable := 0
 	for i in _row_ids.size():
 		var id := _row_ids[i]
 		var u := Tuning.upgrade_def(id)
 		var lv := Save.level(id)
 		_row_name[i].text = "%s   %d/%d" % [u["name"], lv, u["max"]]
 		_row_effect[i].text = Tuning.effect_text(id, lv)
-		var b := _row_btn[i]
-		var st := _btn_max if Save.is_maxed(id) else (_btn_afford if Save.can_buy(id) else _btn_poor)
-		_set_button_style(b, st)
-		b.text = "MAX" if Save.is_maxed(id) else Tuning.fmt(Save.cost_of_next(id))
-		b.disabled = Save.is_maxed(id)
+		if Save.is_maxed(id):
+			_look(_row_btn[i], 2, "MAX")
+		elif Save.can_buy(id):
+			affordable += 1
+			_look(_row_btn[i], 0, Tuning.fmt(Save.cost_of_next(id)))
+		else:
+			_look(_row_btn[i], 1, Tuning.fmt(Save.cost_of_next(id)))
+	_nav_buttons[0].text = "UPGRADES" if affordable == 0 else "UPGRADES  %d" % affordable
+	_style_button(_nav_buttons[0], _sb_accent if affordable > 0 else _sb_card, Color(0.1, 0.07, 0.02) if affordable > 0 else C_TEXT)
 	for i in Tuning.frames.size():
 		var fd: Dictionary = Tuning.frames[i]
 		var fr: Dictionary = _frame_rows[i]
 		fr["name"].text = fd["name"] + ("   ✓" if Save.frame == fd["id"] else "")
 		fr["eff"].text = fd["desc"]
-		var fb: Button = fr["btn"]
 		if Save.frame == fd["id"]:
-			fb.text = "EQUIPPED"
-			fb.disabled = true
-			_set_button_style(fb, _btn_max)
+			_look(fr["btn"], 2, "FLYING")
 		elif Save.owns_frame(fd["id"]):
-			fb.text = "EQUIP"
-			fb.disabled = false
-			_set_button_style(fb, _btn_afford)
+			_look(fr["btn"], 0, "FLY")
 		else:
-			fb.text = Tuning.fmt(Tuning.frame_cost(fd["id"]))
-			fb.disabled = false
-			_set_button_style(fb, _btn_afford if Save.scrap >= Tuning.frame_cost(fd["id"]) else _btn_poor)
+			_look(fr["btn"], 0 if Save.scrap >= Tuning.frame_cost(fd["id"]) else 1, Tuning.fmt(Tuning.frame_cost(fd["id"])))
 	for i in Tuning.launchers.size():
 		var ld: Dictionary = Tuning.launchers[i]
 		var lr: Dictionary = _launcher_rows[i]
 		lr["name"].text = ld["name"] + ("   ✓" if Save.launcher == ld["id"] else "")
 		lr["eff"].text = "%s  (%d m/s)" % [ld["desc"], roundi(Tuning.launcher_speed(ld["id"], Save.level("ramp")))]
-		var lb: Button = lr["btn"]
 		if Save.launcher == ld["id"]:
-			lb.text = "EQUIPPED"
-			lb.disabled = true
-			_set_button_style(lb, _btn_max)
+			_look(lr["btn"], 2, "IN USE")
 		elif Save.owns_launcher(ld["id"]):
-			lb.text = "EQUIP"
-			lb.disabled = false
-			_set_button_style(lb, _btn_afford)
+			_look(lr["btn"], 0, "USE")
 		elif i > 0 and not Save.owns_launcher(Tuning.launchers[i - 1]["id"]):
-			lb.text = "LOCKED"
-			lb.disabled = true
-			_set_button_style(lb, _btn_poor)
+			_look(lr["btn"], 2, "LOCKED")
 		else:
-			lb.text = Tuning.fmt(Tuning.launcher_cost(ld["id"]))
-			lb.disabled = false
-			_set_button_style(lb, _btn_afford if Save.can_buy_launcher(ld["id"]) else _btn_poor)
-
-## (called at the end of refresh_shop)
-func _refresh_extras(last: Dictionary = {}, boost_ready: bool = false) -> void:
+			_look(lr["btn"], 0 if Save.can_buy_launcher(ld["id"]) else 1, Tuning.fmt(Tuning.launcher_cost(ld["id"])))
 	_refresh_style()
-	_refresh_daily(last)
+	_refresh_daily()
+	_refresh_missions()
 	_refresh_ads(last, boost_ready)
+
+func _refresh_missions() -> void:
+	for i in Missions.SLOTS:
+		if i < Save.missions.size():
+			var m: Dictionary = Save.missions[i]
+			_mission_rows[i].text = Missions.describe(m)
+			_mission_rewards[i].text = "+%s" % Tuning.fmt(m["reward"])
+			_mission_counts[i].text = "best %s" % Missions.progress_text(m, int(m.get("best", 0)))
+			_mission_fills[i].anchor_right = Missions.fraction(m)
+			_mission_new[i].visible = bool(m.get("fresh", false))
+		else:
+			_mission_rows[i].text = ""
+			_mission_rewards[i].text = ""
+			_mission_counts[i].text = ""
+			_mission_fills[i].anchor_right = 0.0
+			_mission_new[i].visible = false
+
+func _refresh_daily() -> void:
+	var key := Save.daily_key
+	_daily_title.text = "%d-%02d-%02d" % [key / 10000, (key / 100) % 100, key % 100]
+	var status := "Reached! Today's bonus is yours." if Save.daily_claimed else "Not reached yet. Fly %s m or more for the bonus." % Tuning.fmt(Save.daily_target)
+	_daily_info.text = "Same world for everyone today.\nTarget %s m   ·   Bonus +%s scrap\nBest today %s m   ·   %d flight%s\n%s" % [Tuning.fmt(Save.daily_target), Tuning.fmt(Save.daily_reward()), Tuning.fmt(Save.daily_best), Save.daily_plays, "" if Save.daily_plays == 1 else "s", status]
+
+## The ad chips: a free boost before a launch (launch screen), double scrap after a flight (results card).
+func _refresh_ads(last: Dictionary, boost_ready: bool) -> void:
+	var on := Tuning.ads_enabled
+	var can_double: bool = on and not last.is_empty() and last["earned"] > 0 and not last.get("doubled", false)
+	_ad_boost_btn.visible = on
+	_ad_boost_btn.disabled = boost_ready
+	_ad_boost_btn.text = "BOOST READY ✓" if boost_ready else "▶ FREE BOOST"
+	_ad_double_btn.visible = on and not last.is_empty() and last["earned"] > 0
+	_ad_double_btn.disabled = not can_double
+	_ad_double_btn.text = "▶ DOUBLE SCRAP" if (last.is_empty() or can_double or not on) else "SCRAP DOUBLED ✓"
+
+# ---------------------------------------------------------------------------------------------
+# Splash, fake ad, stamp
+# ---------------------------------------------------------------------------------------------
+
+func _build_splash() -> void:
+	_splash = Control.new()
+	_full(_splash)
+	_splash.mouse_filter = Control.MOUSE_FILTER_STOP
+	_splash.visible = false
+	var bg := ColorRect.new()
+	bg.color = Color(0.09, 0.11, 0.16, 0.98)
+	_full(bg)
+	_splash.add_child(bg)
+	var t := _label(HERO, C_TEXT)
+	_full(t)
+	t.text = "JUNKYARD\nLAUNCH"
+	t.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_splash.add_child(t)
+	add_child(_splash)
+
+func _build_ad_screen() -> void:
+	_ad_screen = Control.new()
+	_full(_ad_screen)
+	_ad_screen.mouse_filter = Control.MOUSE_FILTER_STOP
+	_ad_screen.visible = false
+	var bg := ColorRect.new()
+	bg.color = Color(0.03, 0.03, 0.06, 0.98)
+	_full(bg)
+	_ad_screen.add_child(bg)
+	var box := VBoxContainer.new()
+	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	box.offset_left = -480
+	box.offset_right = 480
+	box.offset_top = -260
+	box.offset_bottom = 260
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ad_screen.add_child(box)
+	_ad_title = _label(HERO, C_TEXT)
+	_ad_title.text = "AD PLAYING"
+	box.add_child(_ad_title)
+	_ad_sub = _label(SMALL, C_MUTED)
+	_ad_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(_ad_sub)
+	add_child(_ad_screen)
 
 ## The fake ad: a full-screen "AD PLAYING" for `seconds`, then `done` is called. A real ad SDK would be called
 ## here instead; nothing else in the game needs to change. `reward_text` ("" for an interstitial) says what it pays.
@@ -870,41 +1025,85 @@ func _end_ad() -> void:
 	if cb.is_valid():
 		cb.call()
 
-## In flight: the daily target line ("" hides it).
-func set_daily_label(text: String) -> void:
-	_daily_label.visible = text != ""
-	_daily_label.text = text
+func _build_stamp() -> void:
+	_stamp = _label(SMALL, Color(1, 1, 1, 0.5), HORIZONTAL_ALIGNMENT_LEFT, 6)
+	_stamp.text = "%s  %s" % [BuildInfo.COMMIT, BuildInfo.TIME]
+	var flags := DebugFlags.summary()
+	if flags != "":
+		_stamp.text += "\n" + flags
+	_stamp.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	_stamp.offset_left = 14
+	_stamp.offset_top = -44 if flags == "" else -80
+	_stamp.add_theme_font_size_override("font_size", 22)
+	add_child(_stamp)
+	if DebugFlags.perf_enabled():
+		_perf_label = _label(SMALL, Color(0.6, 1, 0.6, 0.9), HORIZONTAL_ALIGNMENT_LEFT, 6)
+		_perf_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+		_perf_label.offset_left = 14
+		_perf_label.offset_top = 14
+		add_child(_perf_label)
 
-func _refresh_daily(last: Dictionary) -> void:
-	var key := Save.daily_key
-	_daily_title.text = "DAILY LAUNCH  ·  %d-%02d-%02d" % [key / 10000, (key / 100) % 100, key % 100]
-	var status := "Reached! Today's bonus is yours." if Save.daily_claimed else "Not reached yet. Fly %s m or more for the bonus." % Tuning.fmt(Save.daily_target)
-	_daily_info.text = "Same world for everyone today.\nTarget %s m   ·   Bonus +%s scrap\nBest today %s m   ·   %d flight%s\n%s" % [Tuning.fmt(Save.daily_target), Tuning.fmt(Save.daily_reward()), Tuning.fmt(Save.daily_best), Save.daily_plays, "" if Save.daily_plays == 1 else "s", status]
+# ---------------------------------------------------------------------------------------------
+# Modes, pre-warm
+# ---------------------------------------------------------------------------------------------
 
-## Show or hide the ad buttons: the rewarded ones only make sense after a flight / before a launch.
-func _refresh_ads(last: Dictionary, boost_ready: bool) -> void:
-	var on := Tuning.ads_enabled
-	_ad_double_btn.visible = on
-	_ad_boost_btn.visible = on
-	var can_double: bool = not last.is_empty() and last["earned"] > 0 and not last.get("doubled", false)
-	_ad_double_btn.disabled = not can_double
-	_ad_double_btn.text = "AD: DOUBLE LAST SCRAP" if (last.is_empty() or can_double) else "SCRAP DOUBLED ✓"
-	_ad_boost_btn.disabled = boost_ready
-	_ad_boost_btn.text = "FREE BOOST READY ✓" if boost_ready else "AD: FREE BOOST CHARGE"
+func set_mode(m: int) -> void:
+	mode = m
+	_flight_root.visible = m == MODE_FLIGHT
+	_shop_root.visible = m == MODE_SHOP
+	_stall.visible = false
+	_toast.visible = false
+	_banner.visible = false
+	for p in _pop_labels:
+		p.visible = false
+	_last_dist = -1
+	_last_pips = -1
+	_hint.text = "HOLD = nose up\nRELEASE = nose down"
+	_aim_key = -1
+	if m == MODE_FLIGHT:
+		_results.visible = false
+		_sheet.visible = false
 
-## Slingshot: the aim read-out and hint while pulling back.
-func show_aim(on: bool, power: float, angle: float) -> void:
-	if not on:
-		if _aim_key != -1:
-			_aim_key = -1
-			_hint.text = "HOLD = nose up\nRELEASE = nose down"
-			_hint.visible = false
-		return
-	var key := int(power * 100.0) * 1000 + int(angle)
-	if key != _aim_key:
-		_aim_key = key
-		_hint.text = "PULL BACK, THEN LET GO!\nPOWER %d%%   ANGLE %d°" % [int(power * 100.0), int(angle)]
-	_hint.visible = true
+func show_splash(on: bool) -> void:
+	_splash.visible = on
+
+## Pre-warm: draw every part of the UI at once (under the splash) so fonts and styles are set up.
+func prewarm_show(on: bool) -> void:
+	_flight_root.visible = on
+	_shop_root.visible = on
+	_results.visible = on
+	_sheet.visible = on
+	_stall.visible = on
+	_hint.visible = on
+	_toast.visible = on
+	_banner.visible = on
+	_ad_screen.visible = on   # (drawn under the splash)
+	for p in _pop_labels:
+		p.visible = on
+		p.text = "BOUNCE! +12 NEW BEST!"
+	if on:
+		_dist.text = "1234 m"
+		_best.text = "BEST 1234 m"
+		_toast.text = "Bounces 2/3"
+		_banner.text = "NEW ZONE!\nCLOUD KINGDOM\n+1,900 scrap"
+		_boost_pips.text = "●●●●○○"
+		_res_caption.text = "LANDED"
+		_res_dist.text = "1,234 m"
+		_res_badge.text = "NEW BEST!"
+		_res_scrap.text = "+999 scrap"
+		_res_detail.text = "88 distance  ·  7 from 3 pickups  ·  4 zone bonus\nFarthest zone: Cheese Moon"
+		_res_mcap.visible = true
+		_res_missions.text = "✓ Collect 40 scrap in one flight   +45"
+		_res_new.text = "New mission: Reach the River without boosting"
+		_res_rusty.text = "Rusty: " + Rusty.GREETING
+		_set_bar(_shop_bar, 3, 0.5)
+		_mission_rows[0].text = "Reach the River without boosting"
+		_mission_rewards[0].text = "+120"
+		_mission_counts[0].text = "best Bounces 2/3"
+		_mission_fills[0].anchor_right = 0.6
+		_mission_new[0].visible = true
+	else:
+		_hint.visible = false
 
 # ---------------------------------------------------------------------------------------------
 # Per frame, ?perf
@@ -928,6 +1127,14 @@ func _process(delta: float) -> void:
 			var m := l.modulate
 			m.a = clampf(1.0 - age / 0.9, 0.0, 1.0)
 			l.modulate = m
+	if _toast.visible and mode == MODE_FLIGHT:
+		var ta := _time - _toast_born
+		if ta > 2.0:
+			_toast.visible = false
+		else:
+			var tm := _toast.modulate
+			tm.a = clampf(2.0 - ta, 0.0, 1.0)
+			_toast.modulate = tm
 	if _banner.visible and mode == MODE_FLIGHT:
 		var ba := _time - _banner_born
 		if ba > 2.4:

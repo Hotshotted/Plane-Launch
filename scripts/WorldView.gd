@@ -72,6 +72,8 @@ var boost_fx := 0.0     # 0..1 while a boost burns: speed lines
 var _chord_mult := 1.0  # wing length factor of the frame being drawn
 var paint_color := Color(0, 0, 0, 0)   # equipped paint (alpha 0 = the frame's own colours)
 var hat_id := "none"
+var log_layers := false           # tests: record the order the glider's layers are drawn in
+var layer_log: PackedStringArray = PackedStringArray()
 var showcase := false   # pre-warm: draw one of everything
 
 var _font: Font
@@ -958,8 +960,14 @@ func _draw_particles() -> void:
 # The glider: every upgrade shows
 # ---------------------------------------------------------------------------------------------
 
+func _ll(name: String) -> void:
+	if log_layers:
+		layer_log.append(name)
+
 func _draw_glider() -> void:
 	var f := flight
+	if log_layers:
+		layer_log.clear()
 	var o := Vector2(_sx(f.x), _sy(f.y))
 	var rot := -f.theta
 	if f.stall_amount > 0.0:
@@ -1013,6 +1021,7 @@ func _draw_glider() -> void:
 	# --- rear wing (biplane) ---
 	if wl >= 3:
 		_wing(o, rot, Vector2(-0.6, 0.15), (1.7 + 0.14 * wl) * _chord_mult, wing_col.darkened(0.12), 0.0)
+		_ll("rear_wing")
 	# --- fuselage ---
 	var fuse := TUB if tier == 0 else (FUSE_MID if tier == 1 else FUSE_SLEEK)
 	if f.frame_id == "anvil":
@@ -1022,17 +1031,27 @@ func _draw_glider() -> void:
 	elif f.frame_id == "pogo":
 		fuse = TUB
 	_poly(fuse, o, rot, fuse_sc, body_col)
+	_ll("fuselage")
 	if tier >= 2:
 		_poly(RECT, o + Vector2(0.2 * c - 0.1 * s, 0.2 * s + 0.1 * c) * u, rot, Vector2(4.2, 0.14) * u, Color(0.95, 0.95, 0.95), 1.0)
-	# --- pilot ---
-	var head := o + Vector2(0.2 * c + 0.75 * s, 0.2 * s - 0.75 * c) * u
-	_poly(OCT, head, rot, Vector2(0.34, 0.34) * u, Color(0.93, 0.76, 0.6), 2.5)
-	_poly(RECT, head + Vector2(0.18 * c, 0.18 * s) * u, rot, Vector2(0.28, 0.16) * u, Color(0.15, 0.15, 0.2), 1.5)
-	_draw_hat(o, rot, c, s, u)
-	if tier >= 3:
-		_poly(DIAMOND, o + Vector2(0.4 * c + 0.55 * s, 0.4 * s - 0.55 * c) * u, rot, Vector2(1.7, 1.25) * u, Color(0.6, 0.85, 0.95, 0.75), 2.5)
 	# --- front wing: bigger and better with every Wings level ---
 	_wing(o, rot, Vector2(0.4, -0.45), (1.7 + 0.14 * wl) * _chord_mult, wing_col, 1.0)
+	_ll("front_wing")
+	if tier >= 3:
+		_poly(DIAMOND, o + Vector2(0.4 * c + 0.55 * s, 0.4 * s - 0.55 * c) * u, rot, Vector2(1.7, 1.25) * u, Color(0.6, 0.85, 0.95, 0.6), 2.5)
+		_ll("canopy")
+	# --- pilot and hat: ALWAYS above the wings, so Whiskers and his hat show for every frame and wing level ---
+	var hy := -0.75
+	match f.frame_id:
+		"feather":
+			hy = -0.62
+		"anvil":
+			hy = -0.82
+	var head := _rot_pt(Vector2(0.2, hy), c, s, u, o)
+	_poly(OCT, head, rot, Vector2(0.48, 0.48) * u, Color(0.93, 0.76, 0.6), 2.5)
+	_poly(RECT, head + Vector2(0.2 * c, 0.2 * s) * u, rot, Vector2(0.32, 0.18) * u, Color(0.15, 0.15, 0.2), 1.5)
+	_ll("head")
+	_draw_hat(o, rot, c, s, u, hy)
 	# --- wheels (the Pogo bounces on a spring instead) ---
 	if f.frame_id == "pogo":
 		var top := o + Vector2(0.1 * c - 0.5 * s, 0.1 * s + 0.5 * c) * u
@@ -1058,23 +1077,25 @@ func _draw_glider() -> void:
 func _rot_pt(p: Vector2, c: float, s: float, u: float, o: Vector2) -> Vector2:
 	return Vector2(p.x * c - p.y * s, p.x * s + p.y * c) * u + o
 
-## Whiskers' hat, on top of the pilot's head.
-func _draw_hat(o: Vector2, rot: float, c: float, s: float, u: float) -> void:
+## Whiskers' hat, on top of the pilot's head (`hy` = the head's height on this frame).
+func _draw_hat(o: Vector2, rot: float, c: float, s: float, u: float, hy: float) -> void:
 	if hat_id == "none":
 		return
+	var k := 1.55   # hats are drawn big so they read at a glance
 	match hat_id:
 		"cap":
-			_poly(RECT, _rot_pt(Vector2(0.2, -1.1), c, s, u, o), rot, Vector2(0.62, 0.3) * u, Color(0.85, 0.15, 0.15), 2.5)
-			_poly(RECT, _rot_pt(Vector2(0.55, -0.98), c, s, u, o), rot, Vector2(0.5, 0.1) * u, Color(0.65, 0.1, 0.1), 2.0)
+			_poly(RECT, _rot_pt(Vector2(0.2, hy - 0.4), c, s, u, o), rot, Vector2(0.7, 0.34) * k * u, Color(0.85, 0.15, 0.15), 2.5)
+			_poly(RECT, _rot_pt(Vector2(0.62, hy - 0.26), c, s, u, o), rot, Vector2(0.55, 0.12) * k * u, Color(0.65, 0.1, 0.1), 2.0)
 		"tophat":
-			_poly(RECT, _rot_pt(Vector2(0.2, -1.38), c, s, u, o), rot, Vector2(0.5, 0.68) * u, Color(0.12, 0.12, 0.15), 2.5)
-			_poly(RECT, _rot_pt(Vector2(0.2, -1.04), c, s, u, o), rot, Vector2(0.95, 0.1) * u, Color(0.12, 0.12, 0.15), 2.5)
-			_poly(RECT, _rot_pt(Vector2(0.2, -1.2), c, s, u, o), rot, Vector2(0.52, 0.1) * u, Color(0.8, 0.2, 0.25), 1.5)
+			_poly(RECT, _rot_pt(Vector2(0.2, hy - 0.72), c, s, u, o), rot, Vector2(0.55, 0.75) * k * u, Color(0.12, 0.12, 0.15), 2.5)
+			_poly(RECT, _rot_pt(Vector2(0.2, hy - 0.36), c, s, u, o), rot, Vector2(1.05, 0.12) * k * u, Color(0.12, 0.12, 0.15), 2.5)
+			_poly(RECT, _rot_pt(Vector2(0.2, hy - 0.52), c, s, u, o), rot, Vector2(0.57, 0.12) * k * u, Color(0.9, 0.3, 0.3), 1.5)
 		"party":
-			_poly(TRI, _rot_pt(Vector2(0.2, -1.38), c, s, u, o), rot, Vector2(0.55, 0.8) * u, Color(0.35, 0.6, 0.95), 2.5)
-			_poly(OCT, _rot_pt(Vector2(0.2, -1.8), c, s, u, o), rot, Vector2(0.1, 0.1) * u, Color(1.0, 0.85, 0.2), 2.0)
+			_poly(TRI, _rot_pt(Vector2(0.2, hy - 0.7), c, s, u, o), rot, Vector2(0.65, 0.95) * k * u, Color(0.35, 0.6, 0.95), 2.5)
+			_poly(OCT, _rot_pt(Vector2(0.2, hy - 1.22), c, s, u, o), rot, Vector2(0.13, 0.13) * k * u, Color(1.0, 0.85, 0.2), 2.0)
 		"crown":
-			_poly(CROWN, _rot_pt(Vector2(0.2, -1.12), c, s, u, o), rot, Vector2(0.75, 0.75) * u, Color(1.0, 0.82, 0.15), 2.5)
+			_poly(CROWN, _rot_pt(Vector2(0.2, hy - 0.42), c, s, u, o), rot, Vector2(0.85, 0.85) * k * u, Color(1.0, 0.82, 0.15), 2.5)
+	_ll("hat")
 
 ## A wing seen from the side-front: a slab above the fuselage with a slanted far edge.
 ## `chord` is its length in meters; the far edge slants up-back, longer with more lift.

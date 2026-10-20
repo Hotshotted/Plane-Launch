@@ -129,7 +129,7 @@ func _apply(d: Dictionary) -> void:
 	if ms is Array:
 		for m in ms:
 			if m is Dictionary and Missions.TYPES.has(String(m.get("type", ""))):
-				missions.append({"type": String(m["type"]), "target": maxi(int(m.get("target", 1)), 1), "reward": maxi(int(m.get("reward", 5)), 0), "zone": clampi(int(m.get("zone", 0)), 0, Zones.COUNT - 1)})
+				missions.append({"type": String(m["type"]), "target": maxi(int(m.get("target", 1)), 1), "reward": maxi(int(m.get("reward", 5)), 0), "zone": clampi(int(m.get("zone", 0)), 0, Zones.COUNT - 1), "best": maxi(int(m.get("best", 0)), 0), "fresh": false})
 		missions = missions.slice(0, Missions.SLOTS)
 	var fo: Variant = d.get("frames_owned", {})
 	if fo is Dictionary:

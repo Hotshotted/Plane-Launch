@@ -51,7 +51,7 @@ static func make(type: String, save: Node) -> Dictionary:
 		"nobird":
 			target = _round5(p * 0.9 + 30.0)
 	var reward := _round5((30.0 + p * 0.25) * float(WEIGHT[type]) * Tuning.mission_reward_mult)
-	return {"type": type, "target": target, "reward": reward, "zone": zone}
+	return {"type": type, "target": target, "reward": reward, "zone": zone, "best": 0, "fresh": false}
 
 ## A mission of a type not already active (and available).
 static func pick(save: Node, active: Array, rng: RandomNumberGenerator) -> Dictionary:
@@ -94,6 +94,84 @@ static func describe(m: Dictionary) -> String:
 			return "Fly %d m without hitting a bird" % m["target"]
 	return "?"
 
+## What a finished flight (stats) amounts to for this mission, in the mission's own units.
+static func value_of(m: Dictionary, st: Dictionary) -> int:
+	match m["type"]:
+		"bounce":
+			return int(st["pad_bounces"])
+		"scrap":
+			return int(st["picked_value"])
+		"distance":
+			return int(st["distance"])
+		"noboost_zone":
+			return int(st["zone_max"]) if st["boosts_used"] == 0 else 0
+		"skip":
+			return int(st["skips"])
+		"updraft":
+			return int(st["fan_entries"])
+		"boost":
+			return int(st["boosts_used"])
+		"gear":
+			return int(st["gears_picked"])
+		"nobird":
+			return int(st["distance"]) if st["bird_hits"] == 0 else 0
+	return 0
+
+## The same, read straight from a flight in progress (no allocation).
+static func value_live(m: Dictionary, f) -> int:
+	match m["type"]:
+		"bounce":
+			return f.pad_bounces
+		"scrap":
+			return f.picked_value
+		"distance":
+			return int(f.distance)
+		"noboost_zone":
+			return f.zone_max if f.boosts_used == 0 else 0
+		"skip":
+			return f.skips
+		"updraft":
+			return f.fan_entries
+		"boost":
+			return f.boosts_used
+		"gear":
+			return f.gears_picked
+		"nobird":
+			return int(f.distance) if f.bird_hits == 0 else 0
+	return 0
+
+## The short name used in toasts and next to the progress bar: "Bounces", "Scrap" ...
+static func short_name(m: Dictionary) -> String:
+	match m["type"]:
+		"bounce":
+			return "Bounces"
+		"scrap":
+			return "Scrap"
+		"distance":
+			return "Distance"
+		"noboost_zone":
+			return Tuning.zone_name(m["zone"]) + " (no boost)"
+		"skip":
+			return "Skips"
+		"updraft":
+			return "Updrafts"
+		"boost":
+			return "Boosts"
+		"gear":
+			return "Gears"
+		"nobird":
+			return "No birds"
+	return "?"
+
+## "Bounces 2/3" (distance ones add " m").
+static func progress_text(m: Dictionary, value: int) -> String:
+	var unit := " m" if m["type"] == "distance" or m["type"] == "nobird" else ""
+	return "%s %d/%d%s" % [short_name(m), mini(value, int(m["target"])), int(m["target"]), unit]
+
+## Best single-flight progress so far, 0..1 (for the bar on the clipboard).
+static func fraction(m: Dictionary) -> float:
+	return clampf(float(m.get("best", 0)) / maxf(float(m["target"]), 1.0), 0.0, 1.0)
+
 ## Is the mission done by a flight with these stats?
 ## stats: distance, picked_value, pad_bounces, skips, fan_entries, boosts_used, gears_picked, bird_hits, zone_max.
 static func is_done(m: Dictionary, st: Dictionary) -> bool:
@@ -124,6 +202,7 @@ static func evaluate(save: Node, st: Dictionary, rng: RandomNumberGenerator) -> 
 	var done: Array[Dictionary] = []
 	for i in save.missions.size():
 		var m: Dictionary = save.missions[i]
+		m["best"] = maxi(int(m.get("best", 0)), mini(value_of(m, st), int(m["target"])))
 		if is_done(m, st):
 			done.append({"text": describe(m), "reward": m["reward"]})
 	if not done.is_empty():
@@ -131,7 +210,10 @@ static func evaluate(save: Node, st: Dictionary, rng: RandomNumberGenerator) -> 
 		for m in save.missions:
 			if not is_done(m, st):
 				kept.append(m)
+		var n_kept := kept.size()
 		save.missions = kept
 		fill(save, rng)
+		for i in range(n_kept, save.missions.size()):
+			save.missions[i]["fresh"] = true
 		save.missions_done += done.size()
 	return done

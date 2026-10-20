@@ -27,6 +27,7 @@ var cam_bottom := 0.0
 var cam_ppm := 28.0
 var _snap_camera := true
 var _trail_t := 0.0
+var _toast_val := PackedInt32Array([0, 0, 0])   # last mission progress shown as a toast, per mission
 var _kick := 0.0               # camera kick from a boost, 1 -> 0
 var _time := 0.0
 
@@ -178,7 +179,7 @@ func _prewarm() -> void:
 # ---------------------------------------------------------------------------------------------
 
 ## Back to the shop with a fresh glider on the ramp (also run in place after a landing).
-func _to_shop(snap: bool = true) -> void:
+func _to_shop(snap: bool = true, results: bool = false) -> void:
 	state = STATE_SHOP
 	_finish_timer = -1.0
 	world.clear_particles()
@@ -192,6 +193,7 @@ func _to_shop(snap: bool = true) -> void:
 	_set_best_text()
 	hud.set_mode(Hud.MODE_SHOP)
 	hud.refresh_shop(last_result, bonus_charge > 0)
+	hud.show_results(results and not last_result.is_empty())
 	_snap_camera = snap or _snap_camera
 
 func _set_best_text() -> void:
@@ -233,7 +235,12 @@ func _start_flight(daily: bool) -> void:
 		_touch_hold[i] = 0
 		_touch_boost[i] = 0
 	hud.set_mode(Hud.MODE_FLIGHT)
-	hud.set_daily_label("DAILY TARGET  %s m" % Tuning.fmt(Save.daily_target) if daily else "")
+	if daily:
+		hud.set_daily_target(Save.daily_target)
+	for mm in Save.missions:
+		mm["fresh"] = false
+	for i in Missions.SLOTS:
+		_toast_val[i] = 0
 	hud.show_hint(Save.runs < 2)
 	flight.launch()
 
@@ -247,6 +254,10 @@ func _finish_run() -> void:
 	var mission_bonus := 0
 	for md in done:
 		mission_bonus += int(md["reward"])
+	var new_missions: Array[String] = []
+	for mn in Save.missions:
+		if mn.get("fresh", false):
+			new_missions.append(Missions.describe(mn))
 	var daily_info := {}
 	var daily_bonus := 0
 	if daily_mode:
@@ -265,7 +276,7 @@ func _finish_run() -> void:
 		"distance": floorf(flight.distance), "earned": earned, "dist_scrap": flight.scrap_for_distance(),
 		"picked": flight.picked_value, "picked_count": flight.picked_count, "new_best": new_best,
 		"zone_bonus": claim["bonus"], "zone": flight.zone_max, "new_zones": claim["new"],
-		"mission_bonus": mission_bonus, "missions": done, "rusty": line, "daily": daily_info, "doubled": false,
+		"mission_bonus": mission_bonus, "missions": done, "new_missions": new_missions, "rusty": line, "daily": daily_info, "doubled": false,
 	}
 	_finish_timer = 0.0
 
@@ -479,17 +490,15 @@ func frame(delta: float, raw_delta: float = 0.0) -> void:
 		if _finish_timer >= 0.0:
 			_finish_timer += delta
 			if _finish_timer >= FINISH_DELAY:
-				_to_shop()
+				_to_shop(true, true)
 				_maybe_interstitial()
 	if state == STATE_FLIGHT and flight.phase == Flight.PH_AIM:
-		hud.set_zone(0, 0, Save.zone_best, 0.0)
-		hud.set_flight(0.0, 0, 0.0, flight.altitude(), false, flight.charges, flight.charges_max, false)
+		hud.set_flight(0.0, flight.charges, flight.charges_max, false, false)
 		hud.show_aim(true, flight.aim_power, flight.aim_angle)
 	elif state == STATE_FLIGHT:
 		hud.show_aim(false, 0.0, 0.0)
-		hud.set_zone(flight.zone, flight.zone_max, Save.zone_best, flight.distance)
-		hud.set_flight(flight.distance, flight.picked_value, flight.speed(), flight.altitude(),
-				flight.stall_amount > 0.0, flight.charges, flight.charges_max, flight.boost_left > 0.0)
+		hud.set_flight(flight.distance, flight.charges, flight.charges_max, flight.boost_left > 0.0, flight.stall_amount > 0.0)
+		_mission_toasts()
 		if flight.phase == Flight.PH_AIR and flight.time_in_air > 4.0:
 			hud.show_hint(false)
 	_time += delta
@@ -499,6 +508,26 @@ func frame(delta: float, raw_delta: float = 0.0) -> void:
 	_apply_camera()
 	if DebugFlags.perf_enabled():
 		hud.set_perf_extra("things %d  particles %d  spd %.0f alt %.0f  x %.0f" % [flight.thing_count, world.live_particles(), flight.speed(), flight.altitude(), flight.x])
+
+## Brief toasts when a mission makes progress ("Bounces 2/3"); nothing permanent on the flight screen.
+func _mission_toasts() -> void:
+	for i in mini(Save.missions.size(), Missions.SLOTS):
+		var mi: Dictionary = Save.missions[i]
+		var t: String = mi["type"]
+		if t == "noboost_zone" or t == "nobird":
+			continue   # these can only be judged at the end of the flight
+		var tgt := int(mi["target"])
+		var cur := Missions.value_live(mi, flight)
+		if t == "distance":
+			var quarter := cur * 4 / maxi(tgt, 1)   # toast at half, three quarters and done
+			if quarter > _toast_val[i] and quarter >= 2:
+				_toast_val[i] = quarter
+				hud.toast(Missions.progress_text(mi, cur) if quarter < 4 else "MISSION DONE: %s" % Missions.progress_text(mi, tgt))
+			elif quarter > _toast_val[i]:
+				_toast_val[i] = quarter
+		elif cur > _toast_val[i]:
+			_toast_val[i] = cur
+			hud.toast(Missions.progress_text(mi, cur) if cur < tgt else "MISSION DONE: %s" % Missions.progress_text(mi, tgt))
 
 # ---------------------------------------------------------------------------------------------
 # Camera
@@ -517,8 +546,8 @@ func _update_camera(dt: float) -> void:
 	if state == STATE_SHOP:
 		# Frame the ramp in the upper part of the screen, above the shop panel.
 		var ramp_h := flight.ramp_top.y + 6.0
-		var ground_sy := size.y - Hud.PANEL_H - 15.0   # just above the panel
-		var avail := ground_sy - 140.0
+		var ground_sy := size.y - Hud.PANEL_H - 20.0   # just above the clipboard
+		var avail := ground_sy - 170.0
 		tp = minf(Tuning.view_scale, avail / ramp_h)
 		tb = (ground_sy - size.y) / tp
 		tx = flight.ramp_top.x - 6.0
@@ -563,25 +592,25 @@ func _handle_events() -> void:
 		var ey := flight.ev_y[k]
 		match flight.ev_kind[k]:
 			Flight.EV_SCRAP:
-				world.burst(WorldView.P_SPARK, ex, ey, 5, 6.0, 0.4, 0.3, Color(1.0, 0.9, 0.4), rng)
+				world.burst(WorldView.P_SPARK, ex, ey, 5, 6.0, 0.4, 0.3, Hud.C_GOLD, rng)
 				var scrap_text := "SCRAP! +%d" % flight.ev_val[k] if Save.mark_seen("scrap") else "+%d" % flight.ev_val[k]
-				hud.popup(scrap_text, world.to_screen(ex, ey) + Vector2(0, -50), Color(1, 0.9, 0.4))
+				hud.popup(scrap_text, world.to_screen(ex, ey) + Vector2(0, -50), Hud.C_GOLD)
 			Flight.EV_PAD:
 				world.burst(WorldView.P_RUBBER, ex, ey + 0.5, 8, 7.0, 0.5, 0.4, Color(0.2, 0.2, 0.22), rng)
 				var pad_text := "BOUNCE! +speed" if Save.mark_seen("pad") else "BOUNCE! +%d m/s" % flight.ev_val[k]
-				hud.popup(pad_text, world.to_screen(ex, ey) + Vector2(0, -160), Color(1.0, 0.6, 0.2))
+				hud.popup(pad_text, world.to_screen(ex, ey) + Vector2(0, -160), Hud.C_ACCENT)
 				_buzz(25)
 			Flight.EV_BIRD:
 				world.burst(WorldView.P_FEATHER, ex, ey, 9, 7.0, 0.8, 0.5, Color(0.8, 0.75, 0.95), rng)
 				var bird_text := "BIRD! -speed" if Save.mark_seen("bird") else "BIRD! -%d m/s" % flight.ev_val[k]
-				hud.popup(bird_text, world.to_screen(ex, ey) + Vector2(0, -100), Color(1.0, 0.35, 0.3))
+				hud.popup(bird_text, world.to_screen(ex, ey) + Vector2(0, -100), Hud.C_DANGER)
 				_buzz(60)
 			Flight.EV_FAN:
 				var fan_text := "UPDRAFT! +height" if Save.mark_seen("fan") else "UPDRAFT!"
-				hud.popup(fan_text, world.to_screen(ex, ey) + Vector2(0, -140), Color(0.6, 0.95, 1.0))
+				hud.popup(fan_text, world.to_screen(ex, ey) + Vector2(0, -140), Hud.C_TEXT)
 			Flight.EV_BOOST:
 				_kick = 1.0
-				hud.popup("BOOST +%d m/s" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -160), Color(1.0, 0.8, 0.2))
+				hud.popup("BOOST +%d m/s" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -160), Hud.C_ACCENT)
 				_buzz(40)
 			Flight.EV_LAND:
 				world.burst(WorldView.P_DUST, ex, 0.3, 10, 6.0, 0.7, 0.6, Color(0.7, 0.6, 0.45), rng)
@@ -590,18 +619,20 @@ func _handle_events() -> void:
 			Flight.EV_ZONE:
 				var zn := Tuning.zone_name(flight.ev_val[k])
 				if flight.ev_val[k] > Save.zone_best:
-					hud.banner("NEW ZONE!\n%s\n+%s scrap" % [zn.to_upper(), Tuning.fmt(Tuning.zone_bonus(flight.ev_val[k]))], Color(1.0, 0.9, 0.35))
+					hud.banner("NEW ZONE!\n%s\n+%s scrap" % [zn.to_upper(), Tuning.fmt(Tuning.zone_bonus(flight.ev_val[k]))], Hud.C_ACCENT)
 					_buzz(70)
 				else:
-					hud.banner(zn.to_upper(), Color(0.8, 0.95, 1.0))
+					hud.banner(zn.to_upper(), Hud.C_TEXT)
 			Flight.EV_SKIP:
 				var cloud := flight.ev_val[k] == 2
 				world.burst(WorldView.P_SPARK, ex, 0.4, 7, 6.0, 0.5, 0.35, Color(1, 1, 1) if cloud else Color(0.6, 0.85, 1.0), rng)
 				var skip_text := ("BOING!" if cloud else "SKIP!") + (" +bounce" if Save.mark_seen("cloud" if cloud else "water") else "")
-				hud.popup(skip_text, world.to_screen(ex, 1.5) + Vector2(0, -100), Color(1, 1, 1) if cloud else Color(0.5, 0.85, 1.0))
+				hud.popup(skip_text, world.to_screen(ex, 1.5) + Vector2(0, -100), Hud.C_TEXT)
 				_buzz(20)
+			Flight.EV_TARGET:
+				hud.popup("TARGET REACHED!", Vector2(_view_size().x * 0.5, 330.0), Hud.C_ACCENT)
 			Flight.EV_BEST:
-				hud.popup("NEW BEST!", Vector2(_view_size().x * 0.5, 330.0), Color(1.0, 0.95, 0.4))
+				hud.popup("NEW BEST!", Vector2(_view_size().x * 0.5, 330.0), Hud.C_ACCENT)
 	flight.ev_n = 0
 
 func _boost_flames() -> void:

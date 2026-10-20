@@ -78,6 +78,24 @@ func avg_distance(levels: Dictionary, seeds: int = 3) -> float:
 		sum += run_pilot(levels, 100 + s).distance
 	return sum / seeds
 
+## The distinct font sizes of the labels and buttons currently visible under `n`.
+func font_sizes(n: Node, out: Dictionary) -> void:
+	if n is Control and not (n as Control).visible:
+		return
+	if n is Label or n is Button:
+		out[(n as Control).get_theme_font_size("font_size")] = true
+	for c in n.get_children():
+		font_sizes(c, out)
+
+## The visible Labels under `n` that have some text.
+func visible_texts(n: Node, out: Array) -> void:
+	if n is Control and not (n as Control).visible:
+		return
+	if n is Label and (n as Label).text != "":
+		out.append(n)
+	for c in n.get_children():
+		visible_texts(c, out)
+
 func total_levels() -> int:
 	var n := 0
 	for u in tn.upgrades:
@@ -379,7 +397,7 @@ func _initialize() -> void:
 	main.hud._launch_btn.pressed.emit()
 	main.flight.zone_max = 1
 	fly_main(main)
-	check(main.last_result["zone_bonus"] == tn.zone_bonus(1) and main.last_result["zone"] == 1 and sv.zone_best == 1 and main.hud._result.text.contains("zone bonus"), "a run into Farmland pays the bonus at the end and says so")
+	check(main.last_result["zone_bonus"] == tn.zone_bonus(1) and main.last_result["zone"] == 1 and sv.zone_best == 1 and main.hud.result_text().contains("zone bonus"), "a run into Farmland pays the bonus at the end and says so")
 	main.hud._launch_btn.pressed.emit()
 	main.flight.zone_max = 1
 	fly_main(main)
@@ -396,10 +414,12 @@ func _initialize() -> void:
 	main.flight.push_event(FlightS.EV_ZONE, main.flight.x, 10.0, 1)
 	main._handle_events()
 	check(main.hud._banner.text == "FARMLAND", "an old zone only shows its name")
-	main.hud.set_zone(2, 2, 1, 400.0)
-	var fills: Array = main.hud._flight_bar["fills"]
-	check(fills[0].anchor_right == 1.0 and fills[2].anchor_right == 1.0 and fills[3].anchor_right > 0.0 and fills[3].anchor_right < 1.0 and fills[5].anchor_right == 0.0, "the progress bar marks the zones reached and fills toward the next")
-	check(main.hud._zone_label.text == "RIVER", "the current zone is named")
+	sv.zone_best = 2
+	sv.best_distance = 400.0
+	main.hud.refresh_shop(main.last_result)
+	var fills: Array = main.hud._shop_bar["fills"]
+	check(fills[0].anchor_right == 1.0 and fills[2].anchor_right == 1.0 and fills[3].anchor_right > 0.0 and fills[3].anchor_right < 1.0 and fills[5].anchor_right == 0.0, "the zone bar on the launch screen marks the zones reached and fills toward the next")
+	check(main.hud._zone_label.text == "RIVER", "the farthest zone is named on the launch screen")
 	fly_main(main)
 	var pal_ok := true
 	for z in range(1, Zones.COUNT):
@@ -510,14 +530,14 @@ func _initialize() -> void:
 	sv.reset_all()
 	main._to_shop()
 	check(main.hud._rusty != null and main.hud._rusty.is_visible_in_tree() and main.hud._rusty_says.text.contains("Rusty"), "Rusty is on the launch screen with a greeting")
-	check(main.hud._mission_rows[0].text.begins_with("•") and main.hud._mission_rewards[2].text.begins_with("+"), "the three missions are listed on the launch screen")
+	check(main.hud._mission_rows[0].text != "" and main.hud._mission_rewards[2].text.begins_with("+"), "the three missions are listed on the launch screen")
 	sv.missions = [{"type": "distance", "target": 5, "reward": 77, "zone": 0}, sv.missions[1], sv.missions[2]]
 	main.hud.refresh_shop(main.last_result)
 	var sc0: float = sv.scrap
 	main.hud._launch_btn.pressed.emit()
 	fly_main(main)
 	check(main.last_result["missions"].size() >= 1 and main.last_result["mission_bonus"] >= 77 and main.last_result["rusty"] != "", "a flight completes the mission and Rusty comments")
-	check(sv.scrap == sc0 + main.last_result["earned"] and main.hud._result.text.contains("MISSION DONE") and main.hud._rusty_says.text.begins_with("Rusty: "), "the reward is paid and shown (%s)" % main.hud._rusty_says.text)
+	check(sv.scrap == sc0 + main.last_result["earned"] and main.hud.result_text().contains("MISSION DONE") and main.hud._rusty_says.text.begins_with("Rusty: "), "the reward is paid and shown (%s)" % main.hud._rusty_says.text)
 	check(sv.missions.size() == 3 and sv.missions[0]["target"] != 5, "the finished mission was replaced")
 	sv.reset_all()
 	main._to_shop()
@@ -588,9 +608,9 @@ func _initialize() -> void:
 	main._to_shop()
 	main.hud.show_tab(1)
 	check(main.hud._tab_pages[1].visible and not main.hud._tab_pages[0].visible, "the FRAMES tab shows its page")
-	check(main.hud._frame_rows.size() == 4 and main.hud._frame_rows[0]["btn"].text == "EQUIPPED" and main.hud._frame_rows[1]["btn"].text == tn.fmt(tn.frame_cost("feather")), "frame rows show EQUIPPED and prices")
+	check(main.hud._frame_rows.size() == 4 and main.hud._frame_rows[0]["btn"].text == "FLYING" and main.hud._frame_rows[1]["btn"].text == tn.fmt(tn.frame_cost("feather")), "frame rows show FLYING and prices")
 	main.hud._frame_rows[1]["btn"].pressed.emit()
-	check(sv.frame == "feather" and main.flight.frame_id == "feather" and main.hud._frame_rows[1]["btn"].text == "EQUIPPED" and main.hud._frame_rows[0]["btn"].text == "EQUIP", "pressing a frame buys and equips it, and the glider on the ramp changes")
+	check(sv.frame == "feather" and main.flight.frame_id == "feather" and main.hud._frame_rows[1]["btn"].text == "FLYING" and main.hud._frame_rows[0]["btn"].text == "FLY", "pressing a frame buys and equips it, and the glider on the ramp changes")
 	main.hud._frame_rows[0]["btn"].pressed.emit()
 	check(sv.frame == "scrapper" and sv.scrap == 5000.0 - tn.frame_cost("feather"), "pressing an owned frame just equips it")
 	main.hud.show_tab(0)
@@ -677,12 +697,12 @@ func _initialize() -> void:
 	sv.add_scrap(100000.0)
 	main._to_shop()
 	main.hud.show_tab(2)
-	check(main.hud._tab_pages[2].visible and main.hud._launcher_rows[0]["btn"].text == "EQUIPPED" and main.hud._launcher_rows[1]["btn"].text == tn.fmt(tn.launcher_cost("sling")) and main.hud._launcher_rows[2]["btn"].text == "LOCKED", "launcher rows: equipped, price, locked")
+	check(main.hud._tab_pages[2].visible and main.hud._launcher_rows[0]["btn"].text == "IN USE" and main.hud._launcher_rows[1]["btn"].text == tn.fmt(tn.launcher_cost("sling")) and main.hud._launcher_rows[2]["btn"].text == "LOCKED", "launcher rows: equipped, price, locked")
 	main.hud._launcher_rows[1]["btn"].pressed.emit()
 	check(sv.launcher == "sling" and main.flight.launcher_id == "sling" and main.hud._launcher_rows[2]["btn"].text == tn.fmt(tn.launcher_cost("catapult")), "buying the Slingshot equips it and unlocks the Catapult row")
 	main.hud._launcher_rows[2]["btn"].pressed.emit()
 	main.hud._launcher_rows[3]["btn"].pressed.emit()
-	check(sv.launcher == "sled" and main.hud._launcher_rows[0]["btn"].text == "EQUIP", "all four can be bought in turn")
+	check(sv.launcher == "sled" and main.hud._launcher_rows[0]["btn"].text == "USE", "all four can be bought in turn")
 	main.hud.show_tab(0)
 	check(main.hud._row_effect[0].text.contains("m/s") and tn.current_launcher == "sled", "the launch-power row follows the equipped launcher (%s)" % main.hud._row_effect[0].text)
 	main.hud._launch_btn.pressed.emit()
@@ -728,7 +748,7 @@ func _initialize() -> void:
 	main.hud.set_style_cat(1)
 	check(main.hud._tab_pages[3].visible and main.hud._style_rows[0]["name"].text.begins_with("No Hat") and main.hud._style_rows[1]["btn"].text == tn.fmt(80.0), "the STYLE tab lists the hats with prices")
 	main.hud._style_rows[3]["btn"].pressed.emit()
-	check(sv.hat == "party" and main.world.hat_id == "party" and main.hud._style_rows[3]["btn"].text == "EQUIPPED", "buying a hat puts it on the pilot in the world")
+	check(sv.hat == "party" and main.world.hat_id == "party" and main.hud._style_rows[3]["btn"].text == "WORN", "buying a hat puts it on the pilot in the world")
 	main.hud.set_style_cat(0)
 	main.hud._style_rows[1]["btn"].pressed.emit()
 	check(sv.paint == "red" and main.world.paint_color.r > 0.8 and main.world.paint_color.a > 0.0, "a paint job recolours the glider")
@@ -819,17 +839,17 @@ func _initialize() -> void:
 	var reward5: int = sv.daily_reward()
 	var sc_before: float = sv.scrap
 	main.hud._daily_btn.pressed.emit()
-	check(main.state == main.STATE_FLIGHT and main.daily_mode and main.flight.target_x == 5.0 and main.world.target_x == 5.0 and main.hud._daily_label.visible and main.hud._daily_label.text.contains("DAILY TARGET"), "the daily button starts today's flight with a target flag")
+	check(main.state == main.STATE_FLIGHT and main.daily_mode and main.flight.target_x == 5.0 and main.world.target_x == 5.0 and main.hud._best.text.contains("DAILY TARGET"), "the daily button starts today's flight with a target flag")
 	var seed_check: int = main.flight.rng.seed
 	check(seed_check == sv.daily_seed(), "...in today's seeded world")
 	fly_main(main)
-	check(main.last_result["daily"]["bonus"] == reward5 and sv.daily_claimed and main.hud._result.text.contains("DAILY:") and main.hud._result.text.contains("BONUS"), "reaching the target pays the daily bonus (+%d) and says so" % reward5)
+	check(main.last_result["daily"]["bonus"] == reward5 and sv.daily_claimed and main.hud.result_text().contains("DAILY:") and main.hud.result_text().contains("BONUS"), "reaching the target pays the daily bonus (+%d) and says so" % reward5)
 	check(RustyS.DAILY.has(main.last_result["rusty"]), "Rusty comments on the daily")
 	main.hud._daily_btn.pressed.emit()
 	fly_main(main)
 	check(main.last_result["daily"]["bonus"] == 0 and sv.daily_plays == 2, "the bonus is only paid once a day")
 	main.hud._launch_btn.pressed.emit()
-	check(not main.daily_mode and main.flight.target_x == 0.0 and not main.hud._daily_label.visible, "a normal LAUNCH has no target flag")
+	check(not main.daily_mode and main.flight.target_x == 0.0 and not main.hud._best.text.contains("DAILY"), "a normal LAUNCH has no target flag")
 	fly_main(main)
 	main.tune_panel.reset_daily()
 	check(not sv.daily_claimed and sv.daily_target > 5 and sv.daily_plays == 0, "?tune: New daily starts a fresh one")
@@ -846,7 +866,7 @@ func _initialize() -> void:
 	main.bonus_charge = 0
 	main.last_result = {}
 	main._to_shop()
-	check(main.hud._ad_double_btn.visible and main.hud._ad_boost_btn.visible and main.hud._ad_double_btn.disabled, "ad buttons are on the launch screen; 'double' waits for a flight")
+	check(not main.hud._ad_double_btn.visible and main.hud._ad_boost_btn.visible, "the free-boost ad is on the launch screen; 'double scrap' waits for a flight")
 	main.hud._ad_boost_btn.pressed.emit()
 	check(main.hud.ad_active and main.hud._ad_screen.visible and main.hud._ad_title.text == "AD PLAYING" and main.hud._ad_sub.text.contains("free boost"), "a rewarded ad shows the fake 'Ad playing' screen")
 	main.hud._launch_btn.pressed.emit()
@@ -858,7 +878,7 @@ func _initialize() -> void:
 	check(main.flight.charges == 1 and main.flight.charges_max == 1 and main.bonus_charge == 0 and main.hud._boost_pips.text == "●", "the free charge is in the next flight (a BOOST button even without a Booster)")
 	touch(main, Vector2(500, 900), false)
 	fly_main(main)
-	check(main.bonus_charge == 0 and main.hud._ad_boost_btn.text.contains("AD:"), "it is used up after one launch")
+	check(main.bonus_charge == 0 and main.hud._ad_boost_btn.text.contains("FREE BOOST"), "it is used up after one launch")
 	check(not main.hud._ad_double_btn.disabled and main.last_result["earned"] > 0, "after a flight the double-scrap ad is on offer")
 	var sc1: float = sv.scrap
 	var earned1: int = main.last_result["earned"]
@@ -894,6 +914,128 @@ func _initialize() -> void:
 	sv.reset_all()
 	main._to_shop()
 
+	print("2j. visual hierarchy, missions panel, toasts, results card, hats")
+	var HudS: GDScript = load("res://scripts/Hud.gd")
+	sv.reset_all()
+	sv.runs = 6
+	sv.levels["booster"] = 2
+	sv.missions = [{"type": "bounce", "target": 4, "reward": 55, "zone": 0, "best": 2, "fresh": true}, {"type": "scrap", "target": 25, "reward": 45, "zone": 0, "best": 10, "fresh": false}, {"type": "distance", "target": 320, "reward": 60, "zone": 0, "best": 0, "fresh": false}]
+	sv.best_distance = 120.0
+	main.last_result = {}
+	main._to_shop()
+	# --- launch screen: LAUNCH is the biggest thing; at most three text sizes; the sheet and results are closed
+	var sizes := {}
+	font_sizes(main.hud._shop_root, sizes)
+	check(sizes.size() <= 3, "launch screen: at most three text sizes (%s)" % str(sizes.keys()))
+	var biggest_other := 0.0
+	for b in [main.hud._nav_buttons[0], main.hud._nav_buttons[1], main.hud._nav_buttons[2], main.hud._nav_buttons[3], main.hud._ad_boost_btn]:
+		biggest_other = maxf(biggest_other, b.custom_minimum_size.y)
+	check(main.hud._launch_btn.custom_minimum_size.y > biggest_other * 1.8 and main.hud._launch_btn.get_theme_font_size("font_size") > 80 and main.hud._launch_btn.get_theme_font_size("font_size") > HudS.BODY * 2, "launch screen: LAUNCH is by far the biggest control (%.0f px, font %d)" % [main.hud._launch_btn.custom_minimum_size.y, main.hud._launch_btn.get_theme_font_size("font_size")])
+	check(not main.hud._sheet.visible and not main.hud.results_visible(), "launch screen: upgrades, garage, style and daily stay behind a tap")
+	# --- the missions clipboard: three missions with progress bars, a NEW tag, rewards
+	check(main.hud._mission_rows[0].text == "Bounce 4 times in one flight" and main.hud._mission_rewards[0].text == "+55", "clipboard: each mission shows its text and reward")
+	check(absf(main.hud._mission_fills[0].anchor_right - 0.5) < 0.001 and absf(main.hud._mission_fills[1].anchor_right - 0.4) < 0.001 and main.hud._mission_fills[2].anchor_right == 0.0, "clipboard: progress bars show the best flight so far (50%, 40%, 0%)")
+	check(main.hud._mission_counts[0].text.contains("Bounces 2/4") and main.hud._mission_counts[1].text.contains("Scrap 10/25") and main.hud._mission_new[0].visible and not main.hud._mission_new[1].visible, "clipboard: counts and a NEW tag for a mission just drawn")
+	check(main.hud._clip.visible and main.hud._rusty.is_visible_in_tree(), "clipboard: Rusty's panel is on the launch screen")
+	main.hud._nav_buttons[0].pressed.emit()
+	check(main.hud._sheet.visible and main.hud._tab_pages[0].visible, "the UPGRADES button opens the shop sheet")
+	var shop_sizes := {}
+	font_sizes(main.hud._sheet, shop_sizes)
+	check(shop_sizes.size() <= 3, "shop sheet: at most three text sizes (%s)" % str(shop_sizes.keys()))
+	main.hud.close_sheet()
+	check(not main.hud._sheet.visible, "the sheet closes")
+	# --- flight screen: only the distance, the best line, the boost button and its pips
+	main.hud._launch_btn.pressed.emit()
+	for i in 40:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+	var flight_labels: Array = []
+	visible_texts(main.hud._flight_root, flight_labels)
+	var names: Array[String] = []
+	for l in flight_labels:
+		names.append(l.text)
+	check(flight_labels.size() == 4 and main.hud._dist in flight_labels and main.hud._best in flight_labels and main.hud._boost_pips in flight_labels, "flight screen: only distance, best line, boost button and pips are on screen (%s)" % str(names))
+	var fsizes := {}
+	font_sizes(main.hud._flight_root, fsizes)
+	check(fsizes.size() <= 3 and main.hud._dist.get_theme_font_size("font_size") == HudS.HERO, "flight screen: distance is the biggest text, at most three sizes (%s)" % str(fsizes.keys()))
+	# --- mission toasts, no permanent clutter
+	check(main.hud._toast.visible == false, "no mission text sits on the flight screen")
+	main.flight.pad_bounces = 1
+	main._mission_toasts()
+	check(main.hud._toast.visible and main.hud._toast.text == "Bounces 1/4", "a bounce toasts the progress (%s)" % main.hud._toast.text)
+	main.flight.pad_bounces = 4
+	main._mission_toasts()
+	check(main.hud._toast.text == "MISSION DONE: Bounces 4/4", "finishing it says so (%s)" % main.hud._toast.text)
+	main.flight.picked_value = 12
+	main._mission_toasts()
+	check(main.hud._toast.text == "Scrap 12/25", "scrap progress toasts too (%s)" % main.hud._toast.text)
+	main.flight.distance = 170.0
+	main._mission_toasts()
+	check(main.hud._toast.text.begins_with("Distance 170/320"), "distance toasts at the halfway mark (%s)" % main.hud._toast.text)
+	main.hud._process(2.6)
+	check(not main.hud._toast.visible, "toasts fade away on their own")
+	main.flight.pad_bounces = 0
+	check(MissionsS.value_live(sv.missions[0], main.flight) == 0 and MissionsS.value_of(sv.missions[0], {"pad_bounces": 3}) == 3, "mission progress is read live from the flight and from end-of-flight stats")
+	fly_main(main)
+	# --- results card
+	sv.reset_all()
+	sv.runs = 6
+	sv.missions = [{"type": "distance", "target": 5, "reward": 77, "zone": 0, "best": 0, "fresh": false}, {"type": "scrap", "target": 9999, "reward": 45, "zone": 0, "best": 3, "fresh": false}, {"type": "bounce", "target": 99, "reward": 50, "zone": 0, "best": 0, "fresh": false}]
+	main.last_result = {}
+	main._to_shop()
+	main.hud._launch_btn.pressed.emit()
+	fly_main(main)
+	check(main.hud.results_visible() and main.hud._res_dist.text.contains("m") and main.hud._res_dist.get_theme_font_size("font_size") == HudS.HERO, "results: a card with the distance, big, appears after the flight")
+	var rsizes := {}
+	font_sizes(main.hud._results, rsizes)
+	check(rsizes.size() <= 3 and main.hud._res_dist.get_theme_font_size("font_size") == rsizes.keys().max(), "results: the distance is the biggest text, at most three sizes (%s)" % str(rsizes.keys()))
+	check(main.hud._res_missions.visible and main.hud._res_missions.text.contains("+77") and main.hud._res_mcap.text == "MISSION DONE", "results: completed missions with their rewards (%s)" % main.hud._res_missions.text)
+	check(main.hud._res_new.visible and main.hud._res_new.text.begins_with("New mission: ") and main.last_result["new_missions"].size() == 1, "results: the new mission that was drawn (%s)" % main.hud._res_new.text)
+	check(main.hud._res_scrap.text == "+%s scrap" % tn.fmt(main.last_result["earned"]) and main.hud._res_rusty.text.begins_with("Rusty: "), "results: scrap earned and Rusty's comment")
+	check(main.hud._mission_new[2].visible and main.hud._mission_rows[2].text == MissionsS.describe(sv.missions[2]), "clipboard: the new mission is tagged NEW behind the card")
+	main.hud._res_continue.pressed.emit()
+	check(not main.hud.results_visible(), "CONTINUE closes the card and shows the launch screen")
+	var kept := {"best": -1}
+	for mm in sv.missions:
+		if mm["type"] == "scrap":
+			kept = mm
+	check(kept["best"] >= 3 and sv.missions.size() == 3, "an unfinished mission keeps its best progress (%d)" % kept["best"])
+	main.hud._launch_btn.pressed.emit()
+	var fresh_left := 0
+	for mm in sv.missions:
+		if mm.get("fresh", false):
+			fresh_left += 1
+	check(fresh_left == 0, "NEW tags clear when the next flight starts")
+	fly_main(main)
+	# --- Whiskers and his hat are always above the wings, on every frame
+	main.hud._res_continue.pressed.emit()
+	main.world.log_layers = true
+	var order_ok := true
+	var hat_ok := true
+	var worn := 0
+	for fid in ["scrapper", "feather", "anvil", "pogo"]:
+		for hid in ["none", "cap", "tophat", "party", "crown"]:
+			var lo := {"wings": 10, "body": 9, "frame": fid}
+			main.flight.reset(lo, 1)
+			main.world.hat_id = hid
+			await process_frame
+			await process_frame
+			var lg: PackedStringArray = main.world.layer_log
+			var fw := lg.find("front_wing")
+			var hd := lg.find("head")
+			var ht := lg.find("hat")
+			if not (fw >= 0 and hd > fw and (lg.find("rear_wing") < fw)):
+				order_ok = false
+			if (hid == "none") != (ht < 0) or (hid != "none" and ht < hd):
+				hat_ok = false
+			if hid != "none" and ht > hd:
+				worn += 1
+	check(order_ok, "Whiskers is drawn after the front wing on every frame (wings at level 10)")
+	check(hat_ok and worn == 16, "every hat is drawn after Whiskers, above the wings, on every frame (%d of 16)" % worn)
+	main.world.log_layers = false
+	main.world.hat_id = "none"
+	sv.reset_all()
+	main._to_shop()
+
 	print("3. upgrades and the early game")
 	var base := avg_distance(lv())
 	check(base > 40.0 and base < 150.0, "a level-0 run is short (%.0f m)" % base)
@@ -925,7 +1067,7 @@ func _initialize() -> void:
 		check(main.state == main.STATE_FLIGHT and main.hud._flight_root.visible and not main.hud._shop_root.visible, "run %d: LAUNCH starts the flight" % (run + 1))
 		var secs := fly_main(main)
 		check(main.state == main.STATE_SHOP, "run %d: back in the shop after the touchdown (%.1f s flown)" % [run + 1, secs])
-		check(main.last_result.get("distance", 0.0) > 20.0 and main.hud._result.text.contains("LANDED"), "run %d: the result is shown (%s)" % [run + 1, main.hud._result.text.replace("\n", " | ")])
+		check(main.last_result.get("distance", 0.0) > 20.0 and main.hud.result_text().contains("LANDED"), "run %d: the result is shown (%s)" % [run + 1, main.hud.result_text().replace("\n", " | ")])
 		check(sv.runs == run + 1 and sv.scrap >= main.last_result["earned"] and sv.scrap == scraps_expected + main.last_result["earned"], "run %d: scrap and run count are saved (+%d scrap)" % [run + 1, main.last_result["earned"]])
 		scraps_expected = sv.scrap
 		# buy the cheapest thing we can
@@ -954,7 +1096,7 @@ func _initialize() -> void:
 	main.hud._launch_btn.pressed.emit()
 	for i in 90:
 		main.frame(1.0 / 60.0, 1.0 / 60.0)
-	main.hud.set_flight(main.flight.distance, 0, 10.0, 10.0, false, main.flight.charges, main.flight.charges_max, false)
+	main.hud.set_flight(main.flight.distance, main.flight.charges, main.flight.charges_max, false, false)
 	var rect: Rect2 = main.hud.boost_rect()
 	check(rect.size.x > 100.0, "the BOOST button is up while flying with a booster (%s)" % str(rect))
 	var ch0: int = main.flight.charges
