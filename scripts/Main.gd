@@ -239,6 +239,7 @@ func _start_flight(daily: bool) -> void:
 		hud.set_daily_target(Save.daily_target)
 	for mm in Save.missions:
 		mm["fresh"] = false
+		mm["moved"] = false
 	for i in Missions.SLOTS:
 		_toast_val[i] = 0
 	hud.show_hint(Save.runs < 2)
@@ -280,26 +281,27 @@ func _finish_run() -> void:
 	}
 	_finish_timer = 0.0
 
+## The glider swells and glows with a burst of sparks: the change you just paid for.
+func _preview_pulse() -> void:
+	world.pulse = 1.0
+	world.burst(WorldView.P_SPARK, flight.x, flight.y, 16, 9.0, 0.8, 0.42, Hud.C_GOLD, rng)
+
 func _on_buy(id: String) -> void:
-	if state == STATE_SHOP:
-		Save.buy(id)
+	if state == STATE_SHOP and Save.buy(id):
+		_preview_pulse()
 
 ## A frames row was pressed: equip it if owned, buy it (and equip) if not.
 func _on_frame(id: String) -> void:
 	if state != STATE_SHOP:
 		return
-	if Save.owns_frame(id):
-		Save.equip_frame(id)
-	else:
-		Save.buy_frame(id)
+	if (Save.equip_frame(id) if Save.owns_frame(id) else Save.buy_frame(id)):
+		_preview_pulse()
 
 func _on_cosmetic(kind: String, id: String) -> void:
 	if state != STATE_SHOP:
 		return
-	if Save.owns_cosmetic(kind, id):
-		Save.equip_cosmetic(kind, id)
-	else:
-		Save.buy_cosmetic(kind, id)
+	if (Save.equip_cosmetic(kind, id) if Save.owns_cosmetic(kind, id) else Save.buy_cosmetic(kind, id)):
+		_preview_pulse()
 
 ## Hand the equipped paint and hat to the renderer.
 func _apply_style() -> void:
@@ -343,10 +345,8 @@ func _interstitial_done() -> void:
 func _on_launcher(id: String) -> void:
 	if state != STATE_SHOP:
 		return
-	if Save.owns_launcher(id):
-		Save.equip_launcher(id)
-	else:
-		Save.buy_launcher(id)
+	if (Save.equip_launcher(id) if Save.owns_launcher(id) else Save.buy_launcher(id)):
+		_preview_pulse()
 
 func _on_save_changed() -> void:
 	Tuning.current_launcher = Save.launcher
@@ -474,10 +474,11 @@ func _process(raw_delta: float) -> void:
 ## One frame of the game with `delta` seconds of simulation (0 = nothing moves, e.g. a skipped frame).
 ## Public so tests can step the game with fixed time.
 func frame(delta: float, raw_delta: float = 0.0) -> void:
+	if delta > 0.0:
+		world.update_particles(delta)   # (also on the launch screen: the glider keeps its little idle animations)
 	if state == STATE_FLIGHT and delta > 0.0:
 		flight.advance(delta, is_holding())
 		_handle_events()
-		world.update_particles(delta)
 		if flight.boost_left > 0.0:
 			_boost_flames()
 		if flight.phase == Flight.PH_AIR and Save.trail != "none":

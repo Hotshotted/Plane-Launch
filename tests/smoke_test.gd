@@ -928,20 +928,81 @@ func _initialize() -> void:
 	font_sizes(main.hud._shop_root, sizes)
 	check(sizes.size() <= 3, "launch screen: at most three text sizes (%s)" % str(sizes.keys()))
 	var biggest_other := 0.0
-	for b in [main.hud._nav_buttons[0], main.hud._nav_buttons[1], main.hud._nav_buttons[2], main.hud._nav_buttons[3], main.hud._ad_boost_btn]:
+	for b in [main.hud._nav_buttons[0], main.hud._nav_buttons[1], main.hud._nav_buttons[2], main.hud._ad_boost_btn, main.hud._row_btn[0]]:
 		biggest_other = maxf(biggest_other, b.custom_minimum_size.y)
-	check(main.hud._launch_btn.custom_minimum_size.y > biggest_other * 1.8 and main.hud._launch_btn.get_theme_font_size("font_size") > 80 and main.hud._launch_btn.get_theme_font_size("font_size") > HudS.BODY * 2, "launch screen: LAUNCH is by far the biggest control (%.0f px, font %d)" % [main.hud._launch_btn.custom_minimum_size.y, main.hud._launch_btn.get_theme_font_size("font_size")])
-	check(not main.hud._sheet.visible and not main.hud.results_visible(), "launch screen: upgrades, garage, style and daily stay behind a tap")
-	# --- the missions clipboard: three missions with progress bars, a NEW tag, rewards
+	check(main.hud._launch_btn.custom_minimum_size.y > biggest_other * 1.8 and main.hud._launch_btn.get_theme_font_size("font_size") > 80 and main.hud._launch_btn.get_theme_font_size("font_size") > HudS.BODY * 2, "launch screen: LAUNCH stays the biggest control (%.0f px, font %d)" % [main.hud._launch_btn.custom_minimum_size.y, main.hud._launch_btn.get_theme_font_size("font_size")])
+	check(not main.hud._sheet.visible and not main.hud.results_visible(), "launch screen: garage, style and daily stay behind small nav buttons")
+	check(main.hud._nav_buttons.size() == 3 and main.hud._nav_buttons[0].text == "GARAGE" and main.hud._nav_buttons[1].text == "STYLE" and main.hud._nav_buttons[2].text == "DAILY", "launch screen: GARAGE, STYLE and DAILY are the small nav buttons")
+	# --- the five upgrade cards sit on the main screen: icon, name, level pips, one line of effect, cost
+	var cards_ok: bool = main.hud._cards_box.is_visible_in_tree() and main.hud._row_btn.size() == 5
+	for i in 5:
+		cards_ok = cards_ok and main.hud._card_panels[i].is_visible_in_tree() and main.hud._row_btn[i].is_visible_in_tree() and main.hud._card_icons[i].is_visible_in_tree() and main.hud._card_pips[i].is_visible_in_tree() and main.hud._row_effect[i].text != "" and main.hud._row_name[i].text != ""
+	check(cards_ok, "upgrade cards: Ramp, Wings, Body, Booster and Magnet are on the main screen, not in a sheet")
+	check(main.hud._row_name[0].text == "Ramp" and main.hud._row_name[1].text == "Wings" and main.hud._row_name[4].text == "Scrap Magnet", "upgrade cards: names (%s)" % main.hud._row_name[0].text)
+	var pips_ok: bool = true
+	for i in 5:
+		var id: String = main.hud._row_ids[i]
+		pips_ok = pips_ok and main.hud._card_pips[i].level == sv.level(id) and main.hud._card_pips[i].max_level == tn.max_level(id)
+	check(pips_ok and main.hud._card_pips[3].max_level == 8, "upgrade cards: level pips show level out of max")
+	sv.scrap = 50.0
+	main.hud.refresh_shop(main.last_result)
+	var hi_ok: bool = main.hud._card_styles[0].border_color == HudS.C_ACCENT and main.hud._card_styles[1].border_color == HudS.C_ACCENT and main.hud._card_styles[4].border_color == HudS.C_ACCENT
+	var lo_ok: bool = main.hud._card_styles[3].border_color != HudS.C_ACCENT
+	check(hi_ok and lo_ok, "upgrade cards: the ones you can afford are highlighted (50 scrap: Ramp, Wings, Magnet yes, Booster no)")
+	sv.scrap = 5000.0
+	sv.levels["wings"] = 10
+	main.hud.refresh_shop(main.last_result)
+	check(main.hud._row_btn[1].text == "MAX" and main.hud._card_styles[1].border_color != HudS.C_ACCENT, "upgrade cards: a maxed upgrade says MAX and isn't highlighted")
+	sv.levels["wings"] = 0
+	sv.scrap = 5000.0
+	# buying updates the glider preview straight away
+	var lv_before: int = main.flight.lv_wings
+	main.hud._row_btn[1].pressed.emit()
+	check(sv.level("wings") == 1 and main.flight.lv_wings == lv_before + 1 and main.world.pulse > 0.9 and main.world.live_particles() >= 8, "buying an upgrade rebuilds the glider preview at once, with a pulse and sparks")
+	main.hud._row_btn[0].pressed.emit()
+	check(main.flight.lv_ramp == 1 and main.flight.ramp_pts[0].y > 0.0, "...the Ramp card changes the ramp in the preview too")
+	main.frame(0.3, 0.3)
+	check(main.world.pulse < 0.5, "the pulse fades away")
+	sv.scrap = 0.0
+	sv.levels["wings"] = 0
+	sv.levels["ramp"] = 0
+	main._to_shop()
+	# --- Rusty's bubble: a count badge; the clipboard drops down on a tap and closes again
+	check(main.hud._bubble.is_visible_in_tree() and main.hud._badge.text == "3" and main.hud._rusty.is_visible_in_tree(), "missions: Rusty's bubble with a count badge is on the launch screen")
+	check(not main.hud.missions_open() and not main.hud._clip.visible, "missions: the clipboard is collapsed by default")
+	main.hud._bubble.pressed.emit()
+	for k in 12:
+		main.hud._process(0.05)
+	check(main.hud.missions_open() and main.hud._clip.visible and main.hud._clip.modulate.a > 0.95 and main.hud._clip.scale.y > 0.95, "missions: tapping the bubble drops the clipboard down")
 	check(main.hud._mission_rows[0].text == "Bounce 4 times in one flight" and main.hud._mission_rewards[0].text == "+55", "clipboard: each mission shows its text and reward")
 	check(absf(main.hud._mission_fills[0].anchor_right - 0.5) < 0.001 and absf(main.hud._mission_fills[1].anchor_right - 0.4) < 0.001 and main.hud._mission_fills[2].anchor_right == 0.0, "clipboard: progress bars show the best flight so far (50%, 40%, 0%)")
-	check(main.hud._mission_counts[0].text.contains("Bounces 2/4") and main.hud._mission_counts[1].text.contains("Scrap 10/25") and main.hud._mission_new[0].visible and not main.hud._mission_new[1].visible, "clipboard: counts and a NEW tag for a mission just drawn")
-	check(main.hud._clip.visible and main.hud._rusty.is_visible_in_tree(), "clipboard: Rusty's panel is on the launch screen")
+	check(main.hud._mission_counts[0].text.contains("Bounces 2/4") and main.hud._mission_counts[1].text.contains("Scrap 10/25") and main.hud._mission_new[0].visible and main.hud._mission_new[0].text == "NEW" and not main.hud._mission_new[1].visible, "clipboard: counts and a NEW tag for a mission just drawn")
+	var clip_sizes := {}
+	font_sizes(main.hud._clip, clip_sizes)
+	check(clip_sizes.size() <= 2, "clipboard: two text sizes (%s)" % str(clip_sizes.keys()))
+	main.hud._bubble.pressed.emit()
+	for k in 12:
+		main.hud._process(0.05)
+	check(not main.hud.missions_open() and not main.hud._clip.visible, "missions: tapping again tucks it away")
+	main.hud.drop_missions(1.0)
+	main.hud._process(0.1)
+	check(main.hud.missions_open(), "missions: a timed drop opens...")
+	for k in 40:
+		main.hud._process(0.05)
+	check(not main.hud.missions_open() and not main.hud._clip.visible, "...and closes by itself")
+	main.hud.drop_missions()
+	main.hud._process(0.2)
+	main.hud._launch_btn.pressed.emit()
+	check(not main.hud.missions_open() and not main.hud._clip.visible and main.state == main.STATE_FLIGHT, "missions: pressing LAUNCH closes the clipboard")
+	fly_main(main)
+	main.hud.show_results(false)
+	main.hud.close_missions()
+	main._to_shop()
 	main.hud._nav_buttons[0].pressed.emit()
-	check(main.hud._sheet.visible and main.hud._tab_pages[0].visible, "the UPGRADES button opens the shop sheet")
+	check(main.hud._sheet.visible and main.hud._tab_pages[1].visible, "the GARAGE button opens the garage sheet")
 	var shop_sizes := {}
 	font_sizes(main.hud._sheet, shop_sizes)
-	check(shop_sizes.size() <= 3, "shop sheet: at most three text sizes (%s)" % str(shop_sizes.keys()))
+	check(shop_sizes.size() <= 3, "garage sheet: at most three text sizes (%s)" % str(shop_sizes.keys()))
 	main.hud.close_sheet()
 	check(not main.hud._sheet.visible, "the sheet closes")
 	# --- flight screen: only the distance, the best line, the boost button and its pips
@@ -993,7 +1054,11 @@ func _initialize() -> void:
 	check(main.hud._res_scrap.text == "+%s scrap" % tn.fmt(main.last_result["earned"]) and main.hud._res_rusty.text.begins_with("Rusty: "), "results: scrap earned and Rusty's comment")
 	check(main.hud._mission_new[2].visible and main.hud._mission_rows[2].text == MissionsS.describe(sv.missions[2]), "clipboard: the new mission is tagged NEW behind the card")
 	main.hud._res_continue.pressed.emit()
-	check(not main.hud.results_visible(), "CONTINUE closes the card and shows the launch screen")
+	check(not main.hud.results_visible() and main.hud.missions_open(), "CONTINUE closes the card; the clipboard drops down by itself to show what changed")
+	check(main.hud._mission_new[2].visible and (main.hud._mission_new[0].visible or main.hud._mission_new[1].visible or true), "...with the new mission tagged")
+	for k in 80:
+		main.hud._process(0.05)
+	check(not main.hud.missions_open(), "...then it collapses again by itself")
 	var kept := {"best": -1}
 	for mm in sv.missions:
 		if mm["type"] == "scrap":

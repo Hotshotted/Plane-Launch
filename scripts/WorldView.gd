@@ -72,6 +72,8 @@ var boost_fx := 0.0     # 0..1 while a boost burns: speed lines
 var _chord_mult := 1.0  # wing length factor of the frame being drawn
 var paint_color := Color(0, 0, 0, 0)   # equipped paint (alpha 0 = the frame's own colours)
 var hat_id := "none"
+var pulse := 0.0                  # 1 -> 0 right after something is bought: the glider swells and glows
+var _gscale := 1.0
 var log_layers := false           # tests: record the order the glider's layers are drawn in
 var layer_log: PackedStringArray = PackedStringArray()
 var showcase := false   # pre-warm: draw one of everything
@@ -155,6 +157,7 @@ func clear_particles() -> void:
 
 func update_particles(dt: float) -> void:
 	_time += dt
+	pulse = maxf(pulse - dt * 2.2, 0.0)
 	for i in PARTICLES:
 		if _plife[i] <= 0.0:
 			continue
@@ -972,7 +975,10 @@ func _draw_glider() -> void:
 	var rot := -f.theta
 	if f.stall_amount > 0.0:
 		rot += sin(_time * 40.0) * 0.06 * f.stall_amount
-	var u := _ppm * GLIDER_SCALE       # meters -> pixels (drawn a bit bigger than life so the upgrades read)
+	_gscale = GLIDER_SCALE * (1.0 + 0.18 * pulse)
+	var u := _ppm * _gscale       # meters -> pixels (drawn a bit bigger than life so the upgrades read)
+	if pulse > 0.02:
+		draw_circle(o, 3.4 * _ppm, Color(1.0, 0.9, 0.4, 0.4 * pulse))
 	var c := cos(rot)
 	var s := sin(rot)
 	var bl := f.lv_body
@@ -1100,7 +1106,7 @@ func _draw_hat(o: Vector2, rot: float, c: float, s: float, u: float, hy: float) 
 ## A wing seen from the side-front: a slab above the fuselage with a slanted far edge.
 ## `chord` is its length in meters; the far edge slants up-back, longer with more lift.
 func _wing(o: Vector2, rot: float, root: Vector2, chord: float, col: Color, front: float) -> void:
-	var u := _ppm * GLIDER_SCALE
+	var u := _ppm * _gscale
 	var c := cos(rot)
 	var s := sin(rot)
 	var depth := 0.55 + 0.05 * flight.lv_wings

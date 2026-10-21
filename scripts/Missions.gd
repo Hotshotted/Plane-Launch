@@ -202,7 +202,9 @@ static func evaluate(save: Node, st: Dictionary, rng: RandomNumberGenerator) -> 
 	var done: Array[Dictionary] = []
 	for i in save.missions.size():
 		var m: Dictionary = save.missions[i]
-		m["best"] = maxi(int(m.get("best", 0)), mini(value_of(m, st), int(m["target"])))
+		var before := int(m.get("best", 0))
+		m["best"] = maxi(before, mini(value_of(m, st), int(m["target"])))
+		m["moved"] = int(m["best"]) > before   # shows an "UP" tag on the clipboard until the next launch
 		if is_done(m, st):
 			done.append({"text": describe(m), "reward": m["reward"]})
 	if not done.is_empty():

@@ -22,7 +22,7 @@ signal ad_boost_pressed
 const HERO := 120
 const BODY := 44
 const SMALL := 28
-const PANEL_H := 800           # height of the launch screen's bottom stack (the world gets the rest)
+const PANEL_H := 900           # height of the launch screen's bottom stack (the world gets the rest)
 const POPUPS := 6
 const MODE_SHOP := 0
 const MODE_FLIGHT := 1
@@ -70,6 +70,16 @@ var _zone_label: Label
 var _shop_bar := {}
 var _shop_bar_key := -1
 var _clip: PanelContainer
+var _clip_t := 0.0                # 0 closed .. 1 open (animated)
+var _clip_target := 0.0
+var _clip_hold := 0.0             # > 0: close by itself after this many seconds
+var _bubble: Button
+var _badge: Label
+var _cards_box: VBoxContainer
+var _card_panels: Array[PanelContainer] = []
+var _card_styles: Array[StyleBoxFlat] = []
+var _card_pips: Array[LevelPips] = []
+var _card_icons: Array[UpgradeIcon] = []
 var _rusty: Rusty
 var _rusty_says: Label
 var _mission_rows: Array[Label] = []
@@ -410,52 +420,103 @@ func _build_launch_screen() -> void:
 	top.add_child(_shop_best)
 	_shop_bar = _make_bar(_shop_root, 92.0)
 	_ad_boost_btn = _button("▶ FREE BOOST", SMALL, 56, _sb_done, C_MUTED)
-	_ad_boost_btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
-	_ad_boost_btn.offset_left = -330
-	_ad_boost_btn.offset_right = -28
+	_ad_boost_btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	_ad_boost_btn.offset_left = 28
+	_ad_boost_btn.offset_right = 330
 	_ad_boost_btn.offset_top = 126
 	_ad_boost_btn.offset_bottom = 182
 	_ad_boost_btn.pressed.connect(func(): ad_boost_pressed.emit())
 	_shop_root.add_child(_ad_boost_btn)
-	# the bottom stack: clipboard, nav, LAUNCH
+	# the bottom stack: the five upgrade cards (the main thing), the nav, LAUNCH
 	var stack := VBoxContainer.new()
 	stack.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	stack.offset_left = 24
 	stack.offset_right = -24
 	stack.offset_bottom = -24
 	stack.offset_top = -PANEL_H + 24
-	stack.add_theme_constant_override("separation", 16)
+	stack.add_theme_constant_override("separation", 12)
 	stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_shop_root.add_child(stack)
+	_cards_box = VBoxContainer.new()
+	_cards_box.add_theme_constant_override("separation", 8)
+	_cards_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	stack.add_child(_cards_box)
+	var nav := HBoxContainer.new()
+	nav.add_theme_constant_override("separation", 12)
+	stack.add_child(nav)
+	for entry in [["GARAGE", 1], ["STYLE", 3], ["DAILY", 4]]:
+		var nb := _button(entry[0], BODY, 84, _sb_card)
+		nb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nb.pressed.connect(show_tab.bind(entry[1]))
+		nav.add_child(nb)
+		_nav_buttons.append(nb)
+	_launch_btn = _button("LAUNCH!", HERO, 170, _sb_accent, Color(0.1, 0.07, 0.02))
+	_launch_btn.add_theme_font_size_override("font_size", 96)
+	_launch_btn.pressed.connect(func():
+		close_missions()
+		launch_pressed.emit())
+	stack.add_child(_launch_btn)
+	_build_mission_bubble()
+
+## Rusty's bubble (top right, with a badge) and the clipboard that drops down from it.
+func _build_mission_bubble() -> void:
+	_bubble = Button.new()
+	_bubble.focus_mode = Control.FOCUS_NONE
+	_bubble.add_theme_font_size_override("font_size", SMALL)
+	var bs := _box(C_PAPER, Color(0.35, 0.25, 0.15), 70, 6)
+	for sn in ["normal", "hover", "pressed", "focus", "disabled"]:
+		_bubble.add_theme_stylebox_override(sn, bs)
+	_bubble.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	_bubble.offset_left = -190
+	_bubble.offset_right = -36
+	_bubble.offset_top = 132
+	_bubble.offset_bottom = 286
+	_bubble.pressed.connect(toggle_missions)
+	_shop_root.add_child(_bubble)
+	_rusty = Rusty.new()
+	_rusty.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_rusty.offset_left = 14
+	_rusty.offset_right = -14
+	_rusty.offset_top = 14
+	_rusty.offset_bottom = -14
+	_rusty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bubble.add_child(_rusty)
+	var badge := Panel.new()
+	badge.add_theme_stylebox_override("panel", _box(C_ACCENT, Color.BLACK, 28, 4))
+	badge.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = -50
+	badge.offset_right = 12
+	badge.offset_top = -12
+	badge.offset_bottom = 50
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bubble.add_child(badge)
+	_badge = _label(SMALL, Color(0.1, 0.07, 0.02))
+	_full(_badge)
+	_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	badge.add_child(_badge)
+	# the clipboard
 	_clip = PanelContainer.new()
 	var paper := _box(C_PAPER, Color(0.35, 0.25, 0.15), 22, 6)
 	paper.content_margin_top = 14
 	paper.content_margin_bottom = 16
 	_clip.add_theme_stylebox_override("panel", paper)
-	_clip.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	stack.add_child(_clip)
+	_clip.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	_clip.offset_left = -936
+	_clip.offset_right = -36
+	_clip.offset_top = 300
+	_clip.offset_bottom = 300
+	_clip.visible = false
+	_shop_root.add_child(_clip)
 	var cv := VBoxContainer.new()
 	cv.add_theme_constant_override("separation", 8)
 	_clip.add_child(cv)
-	var head := HBoxContainer.new()
-	head.add_theme_constant_override("separation", 14)
-	cv.add_child(head)
-	_rusty = Rusty.new()
-	_rusty.custom_minimum_size = Vector2(88, 88)
-	_rusty.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	head.add_child(_rusty)
-	var hv := VBoxContainer.new()
-	hv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	hv.add_theme_constant_override("separation", 0)
-	head.add_child(hv)
 	var ct := _label(SMALL, C_INK_SOFT, HORIZONTAL_ALIGNMENT_LEFT)
 	ct.text = "RUSTY'S MISSIONS"
-	hv.add_child(ct)
+	cv.add_child(ct)
 	_rusty_says = _label(SMALL, C_INK, HORIZONTAL_ALIGNMENT_LEFT)
 	_rusty_says.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_rusty_says.custom_minimum_size = Vector2(0, 58)
-	hv.add_child(_rusty_says)
+	cv.add_child(_rusty_says)
 	for i in Missions.SLOTS:
 		var mv := VBoxContainer.new()
 		mv.add_theme_constant_override("separation", 2)
@@ -506,19 +567,42 @@ func _build_launch_screen() -> void:
 		_mission_counts.append(cnt)
 		_mission_fills.append(fill)
 		_mission_new.append(tag)
-	var nav := HBoxContainer.new()
-	nav.add_theme_constant_override("separation", 12)
-	stack.add_child(nav)
-	for entry in [["UPGRADES", 0], ["GARAGE", 1], ["STYLE", 3], ["DAILY", 4]]:
-		var nb := _button(entry[0], BODY, 92, _sb_card)
-		nb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		nb.pressed.connect(show_tab.bind(entry[1]))
-		nav.add_child(nb)
-		_nav_buttons.append(nb)
-	_launch_btn = _button("LAUNCH!", HERO, 190, _sb_accent, Color(0.1, 0.07, 0.02))
-	_launch_btn.add_theme_font_size_override("font_size", 96)
-	_launch_btn.pressed.connect(func(): launch_pressed.emit())
-	stack.add_child(_launch_btn)
+
+## Open / close the clipboard. It grows down from the bubble and fades in; `seconds` > 0 closes it again by itself.
+func drop_missions(seconds: float = 0.0) -> void:
+	_clip_target = 1.0
+	_clip_hold = seconds
+	if _sheet.visible:
+		_sheet.visible = false
+
+func close_missions() -> void:
+	_clip_target = 0.0
+	_clip_hold = 0.0
+
+func toggle_missions() -> void:
+	if _clip_target > 0.5:
+		close_missions()
+	else:
+		drop_missions()
+
+func missions_open() -> bool:
+	return _clip_target > 0.5
+
+func _animate_clip(delta: float) -> void:
+	var step := delta * 7.0
+	_clip_t = move_toward(_clip_t, _clip_target, step)
+	if _clip_target > 0.5 and _clip_hold > 0.0:
+		_clip_hold -= delta
+		if _clip_hold <= 0.0:
+			_clip_target = 0.0
+	var on := _clip_t > 0.01
+	if on != _clip.visible:
+		_clip.visible = on
+	if on:
+		var e := _clip_t * _clip_t * (3.0 - 2.0 * _clip_t)
+		_clip.pivot_offset = Vector2(_clip.size.x, 0.0)
+		_clip.scale = Vector2(1.0, e)
+		_clip.modulate.a = e
 
 # ---- zone progress bar (one thin segment per zone) ----
 
@@ -598,8 +682,8 @@ func _build_sheet() -> void:
 	_sheet.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	_sheet.offset_left = 24
 	_sheet.offset_right = -24
-	_sheet.offset_bottom = -24 - 190 - 4
-	_sheet.offset_top = -24 - 190 - 4 - 790
+	_sheet.offset_bottom = -24 - 170 - 4
+	_sheet.offset_top = -24 - 170 - 4 - 810
 	_sheet.add_theme_stylebox_override("panel", _box(Color(0.09, 0.11, 0.16, 1.0), Color.BLACK, 30, 6))
 	_sheet.visible = false
 	_shop_root.add_child(_sheet)
@@ -627,7 +711,7 @@ func _build_sheet() -> void:
 		_sub_buttons.append(sb)
 	var holder := Control.new()
 	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	holder.custom_minimum_size = Vector2(0, 500)
+	holder.custom_minimum_size = Vector2(0, 530)
 	holder.clip_contents = true
 	col.add_child(holder)
 	for ti in 5:
@@ -638,11 +722,11 @@ func _build_sheet() -> void:
 		holder.add_child(page)
 		_tab_pages.append(page)
 	for u in Tuning.upgrades:
-		var r := _make_row(_tab_pages[0])
-		r["btn"].pressed.connect(func(): buy_pressed.emit(u["id"]))
-		_row_name.append(r["name"])
-		_row_effect.append(r["eff"])
-		_row_btn.append(r["btn"])
+		var c := _make_card(u["id"])
+		c["btn"].pressed.connect(func(): buy_pressed.emit(u["id"]))
+		_row_name.append(c["name"])
+		_row_effect.append(c["eff"])
+		_row_btn.append(c["btn"])
 		_row_ids.append(u["id"])
 	for f in Tuning.frames:
 		var r2 := _make_row(_tab_pages[1])
@@ -682,6 +766,52 @@ func _build_sheet() -> void:
 	show_tab(0)
 	_sheet.visible = false
 
+## An upgrade card on the main screen: icon, name + level pips, one line of effect, and the cost button.
+func _make_card(id: String) -> Dictionary:
+	var card := PanelContainer.new()
+	var st := _box(C_CARD, Color.BLACK, 20, 4)
+	st.content_margin_top = 5
+	st.content_margin_bottom = 5
+	card.add_theme_stylebox_override("panel", st)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 16)
+	card.add_child(h)
+	var icon := UpgradeIcon.new()
+	icon.custom_minimum_size = Vector2(76, 76)
+	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.set_kind(id)
+	h.add_child(icon)
+	var v := VBoxContainer.new()
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	v.add_theme_constant_override("separation", 2)
+	h.add_child(v)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 14)
+	v.add_child(top)
+	var nm := _label(BODY, C_TEXT, HORIZONTAL_ALIGNMENT_LEFT)
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(nm)
+	var pips := LevelPips.new()
+	pips.custom_minimum_size = Vector2(190, 24)
+	pips.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	pips.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	top.add_child(pips)
+	var ef := _label(SMALL, C_MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	ef.clip_text = true
+	v.add_child(ef)
+	var b := _button("", BODY, 74, _sb_accent, Color(0.1, 0.07, 0.02))
+	b.custom_minimum_size = Vector2(220, 74)
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(b)
+	_cards_box.add_child(card)
+	_card_panels.append(card)
+	_card_styles.append(st)
+	_card_pips.append(pips)
+	_card_icons.append(icon)
+	return {"name": nm, "eff": ef, "btn": b}
+
 ## One sheet row: a name, a quiet one-line description, and a button on the right.
 func _make_row(page: Control) -> Dictionary:
 	var row := PanelContainer.new()
@@ -711,10 +841,14 @@ func _make_row(page: Control) -> Dictionary:
 
 func show_tab(i: int) -> void:
 	_tab = i
+	if i == 0:   # the upgrades are on the main screen: 0 just closes the sheet
+		_sheet.visible = false
+		return
+	close_missions()
 	_sheet.visible = true
 	for k in _tab_pages.size():
 		_tab_pages[k].visible = k == i
-	_sheet_title.text = ["UPGRADES", "GARAGE", "GARAGE", "STYLE", "DAILY LAUNCH"][i]
+	_sheet_title.text = ["", "GARAGE", "GARAGE", "STYLE", "DAILY LAUNCH"][i]
 	_sub_tabs.visible = i == 1 or i == 2
 	for k in _sub_buttons.size():
 		var on := (k + 1) == i
@@ -824,7 +958,13 @@ func _build_results() -> void:
 	v.add_child(_res_continue)
 
 func show_results(on: bool) -> void:
+	var closing := _results.visible and not on
 	_results.visible = on
+	if closing:
+		for m in Save.missions:
+			if m.get("moved", false) or m.get("fresh", false):
+				drop_missions(2.8)   # show what changed, then it tucks itself away
+				break
 
 func results_visible() -> bool:
 	return _results.visible
@@ -881,22 +1021,29 @@ func refresh_shop(last: Dictionary, boost_ready: bool = false) -> void:
 	else:
 		_fill_results(last)
 		_rusty_says.text = "Rusty: " + last["rusty"]
-	var affordable := 0
 	for i in _row_ids.size():
 		var id := _row_ids[i]
 		var u := Tuning.upgrade_def(id)
 		var lv := Save.level(id)
-		_row_name[i].text = "%s   %d/%d" % [u["name"], lv, u["max"]]
+		var name_text: String = u["name"]
+		var icon_kind := id
+		if id == "ramp":   # the first card is the launch power of whatever you launch from
+			name_text = Tuning.launcher_def(Save.launcher)["name"]
+			icon_kind = Save.launcher if Save.launcher != "ramp" else "ramp"
+		_row_name[i].text = name_text
 		_row_effect[i].text = Tuning.effect_text(id, lv)
+		_card_icons[i].set_kind(icon_kind)
+		_card_pips[i].set_level(lv, int(u["max"]))
+		var can := Save.can_buy(id)
+		_card_styles[i].border_color = C_ACCENT if can else Color.BLACK
+		_card_styles[i].bg_color = C_CARD.lerp(C_ACCENT, 0.12) if can else C_CARD
+		_card_styles[i].set_border_width_all(5 if can else 3)
 		if Save.is_maxed(id):
 			_look(_row_btn[i], 2, "MAX")
-		elif Save.can_buy(id):
-			affordable += 1
+		elif can:
 			_look(_row_btn[i], 0, Tuning.fmt(Save.cost_of_next(id)))
 		else:
 			_look(_row_btn[i], 1, Tuning.fmt(Save.cost_of_next(id)))
-	_nav_buttons[0].text = "UPGRADES" if affordable == 0 else "UPGRADES  %d" % affordable
-	_style_button(_nav_buttons[0], _sb_accent if affordable > 0 else _sb_card, Color(0.1, 0.07, 0.02) if affordable > 0 else C_TEXT)
 	for i in Tuning.frames.size():
 		var fd: Dictionary = Tuning.frames[i]
 		var fr: Dictionary = _frame_rows[i]
@@ -927,6 +1074,7 @@ func refresh_shop(last: Dictionary, boost_ready: bool = false) -> void:
 	_refresh_ads(last, boost_ready)
 
 func _refresh_missions() -> void:
+	_badge.text = str(Save.missions.size())
 	for i in Missions.SLOTS:
 		if i < Save.missions.size():
 			var m: Dictionary = Save.missions[i]
@@ -934,7 +1082,9 @@ func _refresh_missions() -> void:
 			_mission_rewards[i].text = "+%s" % Tuning.fmt(m["reward"])
 			_mission_counts[i].text = "best %s" % Missions.progress_text(m, int(m.get("best", 0)))
 			_mission_fills[i].anchor_right = Missions.fraction(m)
-			_mission_new[i].visible = bool(m.get("fresh", false))
+			var is_new: bool = m.get("fresh", false)
+			_mission_new[i].text = "NEW" if is_new else "UP"
+			_mission_new[i].visible = is_new or m.get("moved", false)
 		else:
 			_mission_rows[i].text = ""
 			_mission_rewards[i].text = ""
@@ -1063,6 +1213,9 @@ func set_mode(m: int) -> void:
 	if m == MODE_FLIGHT:
 		_results.visible = false
 		_sheet.visible = false
+		close_missions()
+		_clip_t = 0.0
+		_clip.visible = false
 
 func show_splash(on: bool) -> void:
 	_splash.visible = on
@@ -1073,6 +1226,10 @@ func prewarm_show(on: bool) -> void:
 	_shop_root.visible = on
 	_results.visible = on
 	_sheet.visible = on
+	_clip.visible = on
+	if on:
+		_clip.scale = Vector2.ONE
+		_clip.modulate.a = 1.0
 	_stall.visible = on
 	_hint.visible = on
 	_toast.visible = on
@@ -1111,6 +1268,7 @@ func prewarm_show(on: bool) -> void:
 
 func _process(delta: float) -> void:
 	_time += delta
+	_animate_clip(delta)
 	if ad_active:
 		_ad_left -= delta
 		if _ad_left <= 0.0:
