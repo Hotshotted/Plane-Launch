@@ -191,6 +191,8 @@ srv.listen(0, async () => {
     if (menuAll < 0.0015) fail('the garage is silent (peak ' + menuAll + ')');
     if (shiftAll < 0.0015) fail('the flight is silent (peak ' + shiftAll + ')');
     if (shotsPeak > musicCeiling) fail('a one-shot (peak ' + shotsPeak.toFixed(3) + ') is louder than the music (peak ' + musicCeiling.toFixed(3) + ')');
+    const flightMusic = peakIn(xm, marks.play + 2, marks.shiftEnd);        // the flight groove (after the crossfade from the garage)
+    if (shotsPeak > flightMusic) fail('a one-shot (peak ' + shotsPeak.toFixed(3) + ') is louder than the flight music (peak ' + flightMusic.toFixed(3) + ')');
     if (shotsPeak < 0.003) fail('no one-shots were heard at all (peak ' + shotsPeak + ')');
     if (shots.clicks > 0) fail('one-shots: ' + shots.clicks + ' discontinuities (largest step ' + shots.maxClick + ')');
     if (shots.clipped > 0) fail('one-shots: ' + shots.clipped + ' clipped samples');

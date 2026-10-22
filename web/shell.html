@@ -61,7 +61,7 @@
   var limiter = ctx.createDynamicsCompressor();          // a gentle limiter on everything the page plays
   limiter.threshold.value = -4; limiter.knee.value = 3; limiter.ratio.value = 20; limiter.attack.value = 0.003; limiter.release.value = 0.12;
   master.connect(limiter); limiter.connect(ctx.destination);
-  var names = ['calm', 'hot', 'wind', 'rumble'];
+  var names = ['garage', 'groove', 'perc', 'lead', 'wind', 'rumble'];
   var gains = {}, want = {}, bufs = {}, srcs = {}, left = names.length, started = false, t0 = 0;
   names.forEach(function (n) { gains[n] = ctx.createGain(); gains[n].gain.value = 0; gains[n].connect(master); want[n] = -80; });
   function lin(db) { return db <= -70 ? 0 : Math.pow(10, db / 20); }
@@ -82,8 +82,8 @@
   api.setMany = function (o) { for (var k in o) { api.set(k, o[k]); } };
   api.setRate = function (n, r) { if (srcs[n]) { srcs[n].playbackRate.setTargetAtTime(r, ctx.currentTime, 0.05); } };
   api.setHeld = function (b) { master.gain.setTargetAtTime(b ? 0 : 1, ctx.currentTime, 0.015); };
-  // seconds into the music loop (the game waits for the next sixteenth before a scrap plink)
-  api.phase = function () { return started ? ((ctx.currentTime - t0) % bufs.calm.duration + bufs.calm.duration) % bufs.calm.duration : -1; };
+  // seconds into the music loop (the game waits for the next sixteenth / eighth / bar before a pluck, an accent or a fanfare)
+  api.phase = function () { return started ? ((ctx.currentTime - t0) % bufs.garage.duration + bufs.garage.duration) % bufs.garage.duration : -1; };
 })();
 </script>
 <style>

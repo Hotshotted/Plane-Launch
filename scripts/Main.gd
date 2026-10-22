@@ -863,13 +863,13 @@ func _handle_events() -> void:
 				_buzz(25)
 			Flight.EV_RING:
 				world.burst(WorldView.P_SPARK, ex, ey, 14, 9.0, 0.7, 0.4, Color(1.0, 0.8, 0.3), rng)
-				sfx.play("ring")
+				sfx.play_accent("ring")
 				_kick = maxf(_kick, 0.6)
 				hud.popup("RING! fly through for speed" if Save.mark_seen("ring") else "RING! +%d" % flight.ev_aux[k], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_ACCENT, "ring")
 				_buzz(30)
 			Flight.EV_BLIMP:
 				world.burst(WorldView.P_DUST, ex, ey, 6, 5.0, 0.5, 0.5, Color(1, 1, 1), rng)
-				sfx.play("boost")
+				sfx.play_accent("skim")
 				hud.popup("BLIMP! skim the top for speed" if Save.mark_seen("blimp") else "SKIM! +%d" % flight.ev_aux[k], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_ACCENT, "blimp")
 				_buzz(30)
 			Flight.EV_STORM:
@@ -878,7 +878,7 @@ func _handle_events() -> void:
 				hud.popup("STORM! go over or under" if Save.mark_seen("storm") else "STORM!", world.to_screen(ex, ey) + Vector2(0, -140), Hud.C_DANGER, "highair")
 				_buzz(50)
 			Flight.EV_STREAM:
-				sfx.play("fan")
+				sfx.play_accent("gust")
 				hud.popup("TAILWIND! stay inside" if Save.mark_seen("stream") else "TAILWIND!", world.to_screen(ex, ey) + Vector2(0, -140), Hud.C_TEXT, "tailwind")
 			Flight.EV_HAZARD:
 				var goose: bool = flight.ev_aux[k] == Flight.K_GOOSE
@@ -888,7 +888,7 @@ func _handle_events() -> void:
 				_buzz(50)
 			Flight.EV_FIND:
 				world.burst(WorldView.P_SPARK, ex, ey, 24, 11.0, 1.0, 0.5, Color(1.0, 0.9, 0.4), rng)
-				sfx.play("find")
+				sfx.play_find()
 				_kick = maxf(_kick, 0.8)
 				hud.popup("%s! +%d" % [Tuning.FIND_NAMES[clampi(flight.ev_aux[k], 0, 3)], flight.ev_val[k]], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_GOLD, "find")
 				_buzz(70)
@@ -966,6 +966,8 @@ func _flight_fx(delta: float) -> void:
 	var spd := flight.speed() if ph == Flight.PH_AIR else 0.0
 	world.speed_fx = clampf((spd - 30.0) / 60.0, 0.0, 1.0)
 	sfx.set_wind(clampf(spd / 90.0, 0.0, 1.0) if not paused else 0.0)
+	var music_speed := flight.speed() if ph == Flight.PH_AIR or ph == Flight.PH_SLIDE else 0.0
+	sfx.set_flight(music_speed, flight.band, ph == Flight.PH_READY or ph == Flight.PH_AIM or ph == Flight.PH_RAMP)
 	if spd > 36.0:
 		_wind_t -= delta
 		if _wind_t <= 0.0:

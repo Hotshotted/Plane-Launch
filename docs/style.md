@@ -92,26 +92,26 @@ arrivals, ease-in-cubic for exits, ease-out-back for things that land. Anything 
 
 ## Audio
 
-**Direction: soft, satisfying and musical, in the spirit of Mini Metro and Alto's Adventure: calm, rounded, cozy.** Every game from this studio sounds like it belongs to the same room (this is Pattern Control's audio direction).
+**Direction: soft, satisfying and musical, in the spirit of Mini Metro and Alto's Adventure: calm, rounded, cozy.** Every game from this studio sounds like it belongs to the same room (this is Pattern Control's audio direction; Plane-Launch's music is a documented deviation, below.)
 
 * **Waveforms:** sines (with a touch of triangle for the muted thuds) and gently filtered noise. No square, no saw, no harsh noise; everything is low-passed, almost nothing above 4 kHz.
 * **Envelopes:** every sound has a soft raised-cosine attack (4 to 12 ms for UI, up to 0.25 s for pads), a natural exponential decay and a smooth release. Nothing starts or stops hard: no clicks.
 * **Space:** a short shared "room" (four damped combs) is baked into every chime, plink and fanfare and into the music's arpeggio.
 * **One key:** C major pentatonic (C D E G A), the key of the music (chords C, Am, F, G). All pitched sounds come from it (`SfxSynth.note_hz(degree)`), so anything that overlaps harmonises. The music is never pitch-shifted. Repeated sounds get about +-3% random pitch and a hair of random level.
-* **On the beat:** scrap plinks wait for the next sixteenth of the music (at most 0.19 s) and a streak climbs the scale one step per pickup, so collecting scrap plays a little melody in time with the music.
-* **Mix:** peak by role: UI 0.08 (the quietest), gameplay 0.15, big moments (landing, new best, new zone, ignition) 0.20. The music's calm layer sits above all of them at its garage level, so **no gameplay sound is ever louder than the music** (the smoke test checks the files; the CI check checks the recording). Wind and rumble are quiet beds under the music. Level changes always glide (at most 60 dB a second).
-* **Rendering:** nothing is synthesised on the phone. `scripts/SfxSynth.gd` is the recipe and `tools/render_audio.gd` bakes it into 44.1 kHz 16-bit mono WAVs: one-shots in `assets/audio/`, loops (`calm`, `hot`, `wind`, `rumble`) in `assets/audio/loops/`. They are committed; re-run `godot --headless --path . --script tools/render_audio.gd` after editing the recipe (the smoke test fails if they differ). One-shots play from a pool of 8 players, always taking a free one so a sound that is still ringing is never cut off.
+* **On the beat:** scrap plucks wait for the next sixteenth of the music (at most 0.125 s) and a streak climbs the scale one step per pickup, so a scrap arc plays a little run in time with the music. Rings, blimp skims and tailwinds wait for the next eighth; a find waits for the next bar line (see Plane-Launch's music below).
+* **Mix:** peak by role: UI 0.08 (the quietest), gameplay 0.15, big moments (landing, new best, new zone, ignition) 0.20. The garage theme sits above all of them at its level, so **no gameplay sound is ever louder than the music** (the smoke test checks the files; the CI check checks the recording). Wind and rumble are quiet beds under the music. Level changes always glide (at most 60 dB a second).
+* **Rendering:** nothing is synthesised on the phone. `scripts/SfxSynth.gd` is the recipe and `tools/render_audio.gd` bakes it into 44.1 kHz 16-bit mono WAVs: one-shots in `assets/audio/`, loops (`garage`, `groove`, `perc`, `lead`, `wind`, `rumble`) in `assets/audio/loops/`. They are committed; re-run `godot --headless --path . --script tools/render_audio.gd` after editing the recipe (the smoke test fails if they differ). One-shots play from a pool of 8 players, always taking a free one so a sound that is still ringing is never cut off.
 * **Buses:** `SFX` and `Music`, and a hard limiter (ceiling -1 dB) on Master, all come from `default_bus_layout.tres`. No bus is ever created at run time (that silences the single-threaded web export).
 * **Loops on the web:** Godot's web samples loop by restarting a buffer from the main thread, which leaves a gap at every wrap when a phone is busy. So the loading page (`PWAudio` in `web/shell.html`) plays the loops itself as native `AudioBufferSource` loops (gapless, off the main thread, phase-locked, through a limiter); the game only sends each layer's level and the wind's rate. The loops ship beside the page, not in the pck.
 * **First tap and background:** browsers keep audio suspended until a tap, so the page resumes every `AudioContext` on the first tap. When the page is hidden, the phone is locked or the tab loses focus (`visibilitychange`, `pagehide`, `blur`) the page suspends every `AudioContext`, even before the game has loaded, and the game mutes Master and pauses a flight. Sound stays off when the page comes back until the player taps Resume (on the launch screen, any tap).
-* **CI:** `tools/web_audio_check.js` loads the exported build in headless Chrome under a 4x CPU slowdown, taps through the game (first tap, garage music, UI sounds, LAUNCH, a flight, hide, show, Resume, landing and results) and records what reaches the speakers. It fails on silence, clicks, dropouts, repeated buffers, clipping, background leaks, an `AudioContext` still running while hidden, sound that returns without a Resume tap, or any one-shot whose peak is above the music's.
+* **CI:** `tools/web_audio_check.js` loads the exported build in headless Chrome under a 4x CPU slowdown, taps through the game (first tap, garage music, UI sounds, LAUNCH, a flight, hide, show, Resume, landing and results) and records what reaches the speakers. It fails on silence, clicks, dropouts, repeated buffers, clipping, background leaks, an `AudioContext` still running while hidden, sound that returns without a Resume tap, or any one-shot whose peak is above the garage music's or the flight groove's.
 * **Export:** docs, tests and tools are left out of the export, as are the page-played loops (`assets/audio/loops/*`).
 
 | Moment | Sound |
 |---|---|
 | UI | very quiet, very short soft knocks, each kind a little different (press, tap, back, toggle, pause, whoosh for sheets) |
 | Buying | three rising plinks; when the part lands, a low muffled bell with a knock (clank) |
-| Scrap | a soft bell plink, one scale step higher per pickup in a streak, on the beat |
+| Scrap | a short tin-and-ukulele pluck, one scale step higher per pickup in a streak, on the next sixteenth |
 | Bounce pad | a rubbery sine gliding up to G with a quick wobble |
 | Updraft fan | air rushing up |
 | Bird | two soft falling coos (E to C, then A to E) |
@@ -123,7 +123,27 @@ arrivals, ease-in-cubic for exits, ease-out-back for things that land. Anything 
 | Results | soft ticks while the distance counts up, a stamp thud, a five-note melody for a new best |
 | New zone | a five-note rising melody |
 | Wind | filtered air whose level and rate rise with speed |
-| Music | garage: a warm pad with a soft bass; flight adds a plucked pentatonic arpeggio with a very soft pulse; the layers crossfade |
+| Music | Plane-Launch's own theme (below): garage = the light version, flight = groove, percussion and lead that follow speed and height; garage and flight crossfade |
+
+### Deviation: Plane-Launch's music
+
+The shared rules above still hold (pre-rendered WAVs, seamless loops, one key, nothing harsh, the garage music above every sound, glides instead of cuts, page-played loops). Plane-Launch departs from the studio's calm direction in tempo, instruments and structure, because a game about launching junk wants to bounce:
+
+* **Tempo and feel:** 120 BPM (`SfxSynth.BEAT` = 0.5 s), bouncy and playful. One loop is four bars of four beats (8 s) over C, Am, F, G, one chord a bar, with a syncopated bass and a whistled tune. Everything is in C major pentatonic (the chords add the odd F and B; the tune, the pickups and every accent stay pentatonic, so they suit every chord).
+* **Junkyard instruments, all synthesised offline (`SfxSynth`):** tuned tin cans and a tin-can kick, hand claps (three quick bursts of band-limited noise), a shaker, a plucky bass, ukulele strums (a Karplus-Strong string, low-passed), and a whistle for the lead. Still no square or saw waves, nothing sharp: percussion starts with a 3 to 6 ms raised-cosine and is low-passed (about 3 kHz); the CI click check runs on it.
+* **Layers (four loops of the same length, starting on the same downbeat, so any mix is in time):**
+
+| Layer | What it holds | When |
+|---|---|---|
+| `garage` | the light theme: a soft pad, roots on the bass, quiet claps and two soft ukulele strums a bar, the tune's main notes on plucks | the launch screen, garage and results; crossfades out at LAUNCH |
+| `groove` | bass, tin-can kick (beats 1, 3 and the "and" of 2), claps on 2 and 4, ukulele up-strums on every off-beat | the base from the launch; falls to a low level as the glider slows and stops |
+| `perc` | shaker sixteenths, tin cans on the off-beats, a ghost clap before the bar line | builds from 30 to 55 m/s |
+| `lead` | the whistled tune (and a soft pluck an octave under it) | the high band (-8 dB) and the sky band (-4 dB), once the glider is fast enough (26 m/s and up) |
+
+  Layers build at 30 dB a second and fall away at 14 dB a second (`Sfx.BUILD_DB_PER_S`, `FALL_DB_PER_S`), and never jump. `Sfx.set_flight(speed, band, launching)` is called every frame of a flight.
+* **Pickups and effects in the music:** scrap picks play a short pluck in the key on the next sixteenth; pickups within 1.2 s climb eight steps of the scale (C5 up to E6). Rings (a plucked C-E-G-C arpeggio), blimp skims (a whistled swoop from G to C) and tailwinds (a soft whistled rise from C to G) are in-key accents that wait for the next eighth. A joke find pings on the next sixteenth and plays its fanfare (a plucked run into a whistled, wobbling high C) on the **next bar line**. Bounce, crash and bird hits stay physical but are tuned where they have pitch: the bounce glides up to G, the crash thud falls from C3 to C2 under an A2 bell, the bird coos E to C and A to E.
+* **Levels:** unchanged. No gameplay sound is louder than the music: the CI audio check compares every one-shot with the garage theme and with the flight groove, and the smoke test checks the files.
+* **Regenerating:** edit the recipe (`SfxSynth._music`), run `godot --headless --path . --script tools/render_audio.gd`, commit the WAVs.
 
 ## App icon, splash, performance
 

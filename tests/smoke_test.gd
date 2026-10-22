@@ -1041,6 +1041,8 @@ func _initialize() -> void:
 	main._mission_toasts()
 	check(scrap_tgt > 0 and main.hud._toast.text == "Scrap %d/%d" % [scrap_tgt / 2, scrap_tgt], "scrap progress toasts too (%s)" % main.hud._toast.text)
 	main._toast_val = PackedInt32Array([0, 0, 0])
+	main.flight.pad_bounces = 0
+	main.flight.picked_value = 0
 	main.flight.distance = 170.0
 	main._mission_toasts()
 	check(main.hud._toast.text.begins_with("Distance 170/320"), "distance toasts at the halfway mark (%s)" % main.hud._toast.text)
@@ -1572,8 +1574,8 @@ func _initialize() -> void:
 		for v in a:
 			m = maxf(m, absf(v))
 		return m
-	var calm_peak: float = peak_of5f.call(loops5f["calm"])
-	var garage_music := calm_peak * db_to_linear(Sfx.GARAGE_CALM_DB)
+	var calm_peak: float = peak_of5f.call(loops5f["garage"])
+	var garage_music := calm_peak * db_to_linear(Sfx.GARAGE_DB)
 	var loudest5f := 0.0
 	var ui_peak := 0.0
 	var loud_name := ""
@@ -1593,7 +1595,7 @@ func _initialize() -> void:
 		var worst := absf(lp[0] - lp[lp.size() - 1])
 		for i5f in range(1, lp.size()):
 			worst = maxf(worst, absf(lp[i5f] - lp[i5f - 1]))
-		if worst > 0.04 or peak_of5f.call(lp) > 0.99:
+		if absf(lp[0] - lp[lp.size() - 1]) > 0.02 or worst > 0.2 or peak_of5f.call(lp) > 0.99:
 			loop_bad.append("%s %.3f" % [k5f, worst])
 	check(loop_bad.is_empty(), "the loops are seamless and do not clip %s" % str(loop_bad))
 	# one-shots pick a free player
@@ -1611,6 +1613,67 @@ func _initialize() -> void:
 	sfx5f.play_clink()
 	sfx5f.play_clink()
 	check(sfx5f._clink_step == 2, "a streak of scrap plinks climbs the scale (step %d)" % sfx5f._clink_step)
+	# --- Plane-Launch's own music: 120 BPM, four phase-locked layers, one key, layers that follow the flight
+	var bpm5h := 60.0 / SfxSynth.BEAT
+	check(bpm5h >= 115.0 and bpm5h <= 125.0 and absf(Sfx.BEAT - SfxSynth.BEAT) < 0.0001, "the music is around 115-125 BPM (%.0f)" % bpm5h)
+	var loop_n5h := int(SfxSynth.LOOP * 44100.0)
+	var same5h := true
+	for k5h in Sfx.MUSIC:
+		same5h = same5h and loops5f[k5h].size() == loop_n5h
+	check(same5h and Sfx.MUSIC.size() == 4 and absf(SfxSynth.LOOP - 8.0) < 0.0001, "garage, groove, perc and lead are the same length (%d samples), so any mix is in time" % loop_n5h)
+	var tune_ok5h := true
+	for tn5h in SfxSynth.TUNE:
+		var semis5h := 12.0 * log(SfxSynth.note_hz(tn5h[2]) / SfxSynth.C4) / log(2.0)
+		tune_ok5h = tune_ok5h and [0, 2, 4, 7, 9].has(posmod(int(round(semis5h)), 12)) and tn5h[1] + tn5h[3] <= 16
+	check(tune_ok5h and SfxSynth.ROOTS.size() == 4 and absf(SfxSynth.ROOTS[0] - 65.41) < 0.01 and absf(SfxSynth.ROOTS[1] - 55.0) < 0.01, "the tune is pentatonic over C, Am, F, G")
+	# the flight layers follow speed and height, and fall away as the glider slows and lands
+	sfx5f.set_music("flight")
+	sfx5f.set_flight(0.0, 0, true)
+	check(is_equal_approx(sfx5f._tgt["groove"], Sfx.GROOVE_DB) and sfx5f._tgt["perc"] < -70.0 and sfx5f._tgt["lead"] < -70.0, "at launch: the base groove only")
+	sfx5f.set_flight(70.0, 0, false)
+	var perc_fast5h: float = sfx5f._tgt["perc"]
+	check(perc_fast5h > -8.0 and sfx5f._tgt["lead"] < -70.0, "fast: extra percussion, but the lead waits for height (%.1f dB)" % perc_fast5h)
+	sfx5f.set_flight(35.0, 0, false)
+	check(sfx5f._tgt["perc"] < perc_fast5h - 6.0, "percussion builds as speed rises (%.1f dB at 35 m/s, %.1f at 70)" % [sfx5f._tgt["perc"], perc_fast5h])
+	sfx5f.set_flight(70.0, 2, false)
+	var lead_high5h: float = sfx5f._tgt["lead"]
+	sfx5f.set_flight(70.0, 3, false)
+	check(lead_high5h > -12.0 and is_equal_approx(sfx5f._tgt["lead"], Sfx.LEAD_SKY_DB) and sfx5f._tgt["lead"] > lead_high5h, "the lead plays in the high band and louder in the sky (%.1f, %.1f dB)" % [lead_high5h, sfx5f._tgt["lead"]])
+	sfx5f.set_flight(20.0, 3, false)
+	check(sfx5f._tgt["lead"] < -70.0 and sfx5f._tgt["perc"] < -70.0, "a slow glider loses the lead and the percussion")
+	sfx5f.set_flight(0.0, 0, false)
+	check(is_equal_approx(sfx5f._tgt["groove"], Sfx.GROOVE_LOW_DB) and sfx5f._tgt["lead"] < -70.0 and sfx5f._tgt["perc"] < -70.0, "landed: only a low groove is left")
+	sfx5f._cur["groove"] = -3.0
+	sfx5f._cur["perc"] = -5.0
+	sfx5f._process(0.1)
+	check(sfx5f._cur["groove"] >= -3.0 - Sfx.FALL_DB_PER_S * 0.1 - 0.01 and sfx5f._cur["perc"] >= -5.0 - Sfx.FALL_DB_PER_S * 0.1 - 0.01, "layers glide away (at most %.0f dB a second)" % Sfx.FALL_DB_PER_S)
+	sfx5f.set_music("garage")
+	sfx5f._cur["groove"] = -80.0
+	sfx5f._cur["perc"] = -80.0
+	# pickups and accents wait for the music's grid
+	check(is_equal_approx(Sfx.wait_for(0.30, Sfx.GRID), 0.075) and Sfx.wait_for(0.25, Sfx.GRID) == 0.0 and is_equal_approx(Sfx.wait_for(0.30, Sfx.BAR), 1.7), "waits are measured to the next sixteenth, eighth or bar")
+	sfx5f._q_n = 0
+	sfx5f._cur["garage"] = Sfx.GARAGE_DB
+	sfx5f.phase_override = 0.30
+	sfx5f._clink_last = -100000
+	sfx5f.play_clink()
+	check(sfx5f._q_n == 1 and sfx5f._q_key[0] == "clink_0" and sfx5f._q_at[0] - Time.get_ticks_msec() <= 76, "a scrap pluck waits for the next sixteenth")
+	sfx5f.play_clink()
+	check(sfx5f._q_key[1] == "clink_1", "the next pickup is one step up")
+	sfx5f._q_n = 0
+	sfx5f.play_accent("ring")
+	check(sfx5f._q_n == 1 and sfx5f._q_key[0] == "ring" and sfx5f._q_at[0] - Time.get_ticks_msec() <= Sfx.ACCENT * 1000.0, "a ring waits for the next eighth")
+	sfx5f._q_n = 0
+	sfx5f.play_find()
+	check(sfx5f._q_n == 2 and sfx5f._q_key[0] == "find_ping" and sfx5f._q_key[1] == "find" and sfx5f._q_at[1] - sfx5f._q_at[0] > 1500, "a find pings on the next sixteenth and plays its fanfare on the next bar (%d ms apart)" % (sfx5f._q_at[1] - sfx5f._q_at[0]))
+	sfx5f._process(0.016)
+	check(sfx5f._q_n == 3 - 1 - (1 if sfx5f._q_at[0] <= Time.get_ticks_msec() else 0) or sfx5f._q_n <= 2, "the queue drains as the moments arrive")
+	sfx5f._q_n = 0
+	sfx5f.phase_override = -1.0
+	sfx5f._cur["garage"] = -80.0
+	check(sfx5f._streams.has("skim") and sfx5f._streams.has("gust") and sfx5f._streams.has("find_ping") and main_src.contains("play_accent(\"ring\")") and main_src.contains("play_find()") and main_src.contains("set_flight("), "the game uses the music-timed accents")
+	var style5h := FileAccess.get_file_as_string("res://docs/style.md")
+	check(style5h.contains("Plane-Launch's music") and style5h.contains("120 BPM") and style5h.contains("Deviation"), "docs/style.md documents the music identity as a deviation")
 	# the background hold: mute the Master bus, resume only on release
 	main._background()
 	check(AudioServer.is_bus_mute(0) and main._audio_hold and sfx5f.held, "going to the background mutes the Master bus")

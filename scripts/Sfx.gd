@@ -8,20 +8,39 @@ extends Node
 ## (PWAudio in web/shell.html: native, gapless AudioBufferSource loops off the main thread) and this script only sends the
 ## level (and the wind's rate) of each layer. Everywhere else (the editor, the tests) the loops are ordinary looping players.
 ## The buses come from default_bus_layout.tres and are never created at run time.
+## The music is Plane-Launch's own (docs/style.md, "Plane-Launch's music"): 120 BPM, four phase-locked layers. The garage plays
+## the light theme; in flight the groove is the base, percussion joins as the speed rises and the whistled lead in the high
+## and sky bands, and they fall away again as the glider slows and lands. Pickups and accents are in-key plucks that wait for
+## the music's grid, so the scrap arc plays a run of notes in time.
 
 const POOL := 8
-const STEPS := 7               # scrap plinks: this many steps up the scale
-const BEAT := 0.75             # the music: seconds per beat, 8 beats per loop (6 s)
-const GRID := BEAT / 4.0       # scrap plinks wait for the next sixteenth of the music
+const STEPS := 8               # scrap plucks: this many steps up the scale
+const BEAT := 0.5              # the music: 120 BPM, seconds per beat; 4 bars of 4 beats per loop (8 s)
+const BAR := BEAT * 4.0
+const GRID := BEAT / 4.0       # scrap plucks wait for the next sixteenth of the music
+const ACCENT := BEAT / 2.0     # rings, skims and tailwinds wait for the next eighth (on the beat or half way to the next)
+const CLINK_WINDOW := 1200     # ms: pickups closer together than this climb the scale
+const QMAX := 16               # sounds waiting for their slot in the music
 const NAMES := ["press", "tap", "back", "toggle", "error", "whoosh", "pause", "tick", "buy", "clank", "stamp", "best", "unlock", "clink",
-		"boing", "fan", "squawk", "boost", "stall", "crunch", "splash", "snap", "swing", "ignite", "ring", "storm", "band", "find"]
+		"boing", "fan", "squawk", "boost", "stall", "crunch", "splash", "snap", "swing", "ignite", "ring", "storm", "band", "find",
+		"skim", "gust", "find_ping"]
 const FILES := ["press", "tap", "back", "toggle", "error", "whoosh", "pause", "tick", "buy", "clank", "stamp", "best", "unlock",
-		"boing", "fan", "squawk", "boost", "stall", "crunch", "splash", "snap", "swing", "ignite", "ring", "storm", "band", "find"]
-const LAYERS := ["calm", "hot", "wind", "rumble"]
+		"boing", "fan", "squawk", "boost", "stall", "crunch", "splash", "snap", "swing", "ignite", "ring", "storm", "band", "find",
+		"skim", "gust", "find_ping"]
+const MUSIC := ["garage", "groove", "perc", "lead"]
+const LAYERS := ["garage", "groove", "perc", "lead", "wind", "rumble"]
 const FADE_DB_PER_S := 60.0    # every level change is a glide (at most this fast), never a cut
-const GARAGE_CALM_DB := -2.0
-const FLIGHT_CALM_DB := -4.0
-const FLIGHT_HOT_DB := -6.0
+const BUILD_DB_PER_S := 30.0   # the flight layers build in at this rate...
+const FALL_DB_PER_S := 14.0    # ...and fall away slower, so a slowing glider loses them smoothly
+const GARAGE_DB := -2.0        # the garage theme
+const GROOVE_DB := -3.0        # the flight's base groove at full
+const GROOVE_LOW_DB := -14.0   # ...and when the glider has slowed to a stop
+const PERC_DB := -5.0          # extra percussion at full speed
+const LEAD_HIGH_DB := -8.0     # the whistled lead in the high band
+const LEAD_SKY_DB := -4.0      # ...and in the sky band
+const PERC_FROM := 30.0        # m/s: the percussion starts to come in here...
+const PERC_FULL := 55.0        # ...and is full here
+const LEAD_FROM := 26.0        # m/s: the lead needs at least this speed (it fades in over the next 14)
 
 var enabled := true
 var plays := {}                # sound name -> how many times it was triggered
@@ -30,17 +49,21 @@ var rumbling := false          # the ramp / sled rumble layer is on
 var music_mode := "off"        # "garage", "flight" or "off"
 var held := false              # audio is held (the page went to the background): the Master bus is muted
 var web_loops := false         # the page plays the loops (web build)
+var phase_override := -1.0     # tests only: a made-up position in the music loop
 var unlocked := false          # the first user gesture has happened (browsers keep audio suspended until then)
 
 var _streams := {}
 var _pool: Array[AudioStreamPlayer] = []
 var _next := 0
 var _players := {}             # layer -> its looping player (not on the web)
-var _cur := {"calm": -80.0, "hot": -80.0, "wind": -80.0, "rumble": -80.0}     # where each layer is now (dB)
-var _tgt := {"calm": -80.0, "hot": -80.0, "wind": -80.0, "rumble": -80.0}     # and where it is gliding to
+var _cur := {"garage": -80.0, "groove": -80.0, "perc": -80.0, "lead": -80.0, "wind": -80.0, "rumble": -80.0}     # where each layer is now (dB)
+var _tgt := {"garage": -80.0, "groove": -80.0, "perc": -80.0, "lead": -80.0, "wind": -80.0, "rumble": -80.0}     # and where it is gliding to
 var _js_sent := {}             # layer -> the level last sent to the page
 var _js_rate := 1.0
-var _queue: Array = []         # [fire_at_msec, stream key]: plinks waiting for their sixteenth
+var _q_at := PackedInt64Array()   # sounds waiting for their slot in the music: when (msec),
+var _q_key: Array[String] = []    # ...which stream,
+var _q_n := 0                     # ...and how many (fixed arrays: nothing is allocated in flight)
+var _clink_keys: Array[String] = []
 var _clink_step := 0
 var _clink_last := -100000
 var _rng := RandomNumberGenerator.new()
@@ -60,12 +83,15 @@ func _ready() -> void:
 	for f in FILES:
 		_streams[f] = load("res://assets/audio/%s.wav" % f)
 	for k in STEPS:
-		_streams["clink_%d" % k] = load("res://assets/audio/clink_%d.wav" % k)
+		_clink_keys.append("clink_%d" % k)
+		_streams[_clink_keys[k]] = load("res://assets/audio/clink_%d.wav" % k)
+	_q_at.resize(QMAX)
+	_q_key.resize(QMAX)
 	for i in POOL:
 		_pool.append(_player("SFX"))
 	if not web_loops and not OS.has_feature("web"):
 		for l in LAYERS:
-			_players[l] = _loop_player(l, "Music" if l == "calm" or l == "hot" else "SFX")
+			_players[l] = _loop_player(l, "Music" if MUSIC.has(l) else "SFX")
 
 func _player(bus: String) -> AudioStreamPlayer:
 	var p := AudioStreamPlayer.new()
@@ -97,35 +123,70 @@ func play(sound: String, pitch: float = 1.0) -> void:
 		return
 	_fire(_streams[sound], pitch)
 
-## A scrap plink: pickups in quick succession climb the C major pentatonic scale, and each plink waits for the next
-## sixteenth of the music (at most 0.19 s), so a streak lands on the beat and sounds like a little melody.
+## A scrap pluck: pickups in quick succession climb the C major pentatonic scale, and each pluck waits for the next
+## sixteenth of the music (at most 0.125 s), so a scrap arc plays a little run in time.
 func play_clink() -> void:
 	var now := Time.get_ticks_msec()
-	_clink_step = 0 if now - _clink_last > 1400 else mini(_clink_step + 1, STEPS - 1)
+	_clink_step = 0 if now - _clink_last > CLINK_WINDOW else mini(_clink_step + 1, STEPS - 1)
 	_clink_last = now
 	plays["clink"] = int(plays["clink"]) + 1
 	if not enabled:
 		return
-	var key := "clink_%d" % _clink_step
-	var wait := _beat_wait()
-	if wait <= 0.01:
+	_on_grid(_clink_keys[_clink_step], GRID)
+
+## An in-key accent (a ring, a blimp skim, a tailwind): it waits for the next eighth of the music.
+func play_accent(sound: String) -> void:
+	plays[sound] = int(plays.get(sound, 0)) + 1
+	if not enabled or not _streams.has(sound):
+		return
+	_on_grid(sound, ACCENT)
+
+## A joke find: a ping on the next sixteenth right away, and the fanfare on the next bar line.
+func play_find() -> void:
+	plays["find"] = int(plays["find"]) + 1
+	if not enabled:
+		return
+	_on_grid("find_ping", GRID)
+	_on_grid("find", BAR)
+
+## Play `key` at the next multiple of `grid` seconds of the music (at once when no music is playing or it is already there).
+func _on_grid(key: String, grid: float) -> void:
+	var wait := _beat_wait(grid)
+	if wait <= 0.01 or _q_n >= QMAX:
 		_fire(_streams[key], 1.0)
 	else:
-		_queue.append([now + int(wait * 1000.0), key])
+		_q_at[_q_n] = Time.get_ticks_msec() + int(wait * 1000.0)
+		_q_key[_q_n] = key
+		_q_n += 1
 
-## Seconds until the next sixteenth of the music (0 when no music is playing).
-func _beat_wait() -> float:
-	if _cur["calm"] < -60.0:
-		return 0.0
-	var phase := -1.0
+## Seconds into the music loop (-1 when it is not playing). (`phase_override` >= 0 stands in for it in the tests.)
+func music_phase() -> float:
+	if phase_override >= 0.0:
+		return phase_override
+	if _music_level() < -60.0:
+		return -1.0
 	if web_loops:
-		phase = float(JavaScriptBridge.eval("window.PWAudio && PWAudio.phase ? PWAudio.phase() : -1"))
-	elif _players.has("calm") and _players["calm"].playing:
-		phase = _players["calm"].get_playback_position()
-	if phase < 0.0:
-		return 0.0
-	var w := GRID - fposmod(phase, GRID)
-	return 0.0 if w > GRID * 0.999 else w
+		return float(JavaScriptBridge.eval("window.PWAudio && PWAudio.phase ? PWAudio.phase() : -1"))
+	for l in MUSIC:
+		if _players.has(l) and _players[l].playing:
+			return _players[l].get_playback_position()
+	return -1.0
+
+## Seconds until the next multiple of `grid` of the music (0 when no music is playing).
+func _beat_wait(grid: float) -> float:
+	var phase := music_phase()
+	return 0.0 if phase < 0.0 else wait_for(phase, grid)
+
+## Seconds from `phase` (into the loop) to the next multiple of `grid` (0 when already on it).
+static func wait_for(phase: float, grid: float) -> float:
+	var w := grid - fposmod(phase, grid)
+	return 0.0 if w > grid * 0.999 else w
+
+func _music_level() -> float:
+	var m := -80.0
+	for l in MUSIC:
+		m = maxf(m, _cur[l])
+	return m
 
 func _fire(stream: AudioStream, pitch: float) -> void:
 	var p := _pool[_next]
@@ -180,33 +241,64 @@ func set_rumble(on: bool) -> void:
 	rumbling = on
 	_tgt["rumble"] = -10.0 if on else -80.0
 
-## "garage" (the calm layer) or "flight" (calm plus the driving layer) or "off": the layers glide to their levels. The key
-## never changes (the music is never pitch-shifted).
+## "garage" (the light theme) or "flight" (the groove, which `set_flight` then shapes) or "off": the layers glide to their
+## levels. The key never changes (the music is never pitch-shifted).
 func set_music(mode: String) -> void:
 	music_mode = mode
+	_tgt["perc"] = -80.0
+	_tgt["lead"] = -80.0
 	match mode:
 		"garage":
-			_tgt["calm"] = GARAGE_CALM_DB
-			_tgt["hot"] = -80.0
+			_tgt["garage"] = GARAGE_DB
+			_tgt["groove"] = -80.0
 		"flight":
-			_tgt["calm"] = FLIGHT_CALM_DB
-			_tgt["hot"] = FLIGHT_HOT_DB
+			_tgt["garage"] = -80.0
+			_tgt["groove"] = GROOVE_DB
 		_:
-			_tgt["calm"] = -80.0
-			_tgt["hot"] = -80.0
+			_tgt["garage"] = -80.0
+			_tgt["groove"] = -80.0
+
+## Shape the flight music from the flight: `speed` (m/s), the altitude `band` (0 low .. 3 sky) and whether the glider is
+## still on the launcher. The groove is the base from the launch; percussion builds with speed; the lead joins in the high
+## and sky bands; everything falls away smoothly as the glider slows and lands.
+func set_flight(speed: float, band: int, launching: bool) -> void:
+	if music_mode != "flight":
+		return
+	if launching:
+		_tgt["groove"] = GROOVE_DB
+		_tgt["perc"] = -80.0
+		_tgt["lead"] = -80.0
+		return
+	_tgt["groove"] = lerpf(GROOVE_LOW_DB, GROOVE_DB, smoothstep(4.0, 18.0, speed))
+	var p := smoothstep(PERC_FROM, PERC_FULL, speed)
+	_tgt["perc"] = lerpf(-30.0, PERC_DB, p) if p > 0.02 else -80.0
+	if band >= 2 and speed > LEAD_FROM:
+		var top := LEAD_HIGH_DB if band == 2 else LEAD_SKY_DB
+		_tgt["lead"] = top - (1.0 - smoothstep(LEAD_FROM, LEAD_FROM + 14.0, speed)) * 14.0
+	else:
+		_tgt["lead"] = -80.0
 
 func _process(delta: float) -> void:
 	if not enabled:
 		return
 	for l in LAYERS:
-		_cur[l] = move_toward(_cur[l], _tgt[l], (FADE_DB_PER_S * 2.0 if l == "rumble" else FADE_DB_PER_S) * delta)
+		var rate := FADE_DB_PER_S * 2.0 if l == "rumble" else FADE_DB_PER_S
+		if l == "groove" or l == "perc" or l == "lead":
+			rate = BUILD_DB_PER_S if _tgt[l] > _cur[l] else FALL_DB_PER_S
+			if _tgt[l] > -60.0 and _cur[l] < -60.0:
+				_cur[l] = -60.0      # (nothing is audible down there: don't spend the build on silence)
+		_cur[l] = move_toward(_cur[l], _tgt[l], rate * delta)
 		_apply(l)
-	if not _queue.is_empty():
+	if _q_n > 0:
 		var now := Time.get_ticks_msec()
-		for i in range(_queue.size() - 1, -1, -1):
-			if now >= int(_queue[i][0]):
-				_fire(_streams[_queue[i][1]], 1.0)
-				_queue.remove_at(i)
+		var i := _q_n - 1
+		while i >= 0:
+			if now >= _q_at[i]:
+				_fire(_streams[_q_key[i]], 1.0)
+				_q_n -= 1
+				_q_at[i] = _q_at[_q_n]
+				_q_key[i] = _q_key[_q_n]
+			i -= 1
 	if web_loops:
 		_push_levels()
 
@@ -224,7 +316,7 @@ func _apply(layer: String) -> void:
 
 ## The bus a layer sits on: Music for the music, SFX for the rest (their volume sliders and mutes apply).
 func _bus_db(layer: String) -> float:
-	var idx := AudioServer.get_bus_index("Music" if layer == "calm" or layer == "hot" else "SFX")
+	var idx := AudioServer.get_bus_index("Music" if MUSIC.has(layer) else "SFX")
 	if idx < 0:
 		return 0.0
 	return -80.0 if AudioServer.is_bus_mute(idx) else AudioServer.get_bus_volume_db(idx)

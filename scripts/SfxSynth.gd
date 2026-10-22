@@ -5,8 +5,10 @@ extends RefCounted
 ## Soft sines and filtered noise, raised-cosine envelopes, a baked-in room, everything in C major pentatonic.
 ## (No autoload references: the smoke test re-renders everything and compares it with the committed files.)
 
-const STEPS := 7               # landing chimes / coin plinks: this many steps up the scale
-const BEAT := 0.75             # music: seconds per beat, 8 beats per loop (6 s)
+const STEPS := 8               # scrap plucks: this many steps up the scale
+const BEAT := 0.5              # music: 120 BPM, seconds per beat; 16 beats (4 bars of 4) per loop (8 s)
+const BAR := BEAT * 4.0
+const LOOP := BAR * 4.0
 const C4 := 261.6256
 const PENTA := [0, 2, 4, 7, 9]  # C D E G A
 
@@ -24,9 +26,11 @@ func clips() -> Dictionary:
 	_build_effects_into(out)
 	return out
 
-## Every loop: name -> samples. calm = the garage music, hot = the driving layer added in flight, wind, rumble.
+## Every loop: name -> samples. The music is four equally long, phase-locked layers (garage: the light theme; groove, perc and
+## lead: the flight layers that build with speed and height), then the wind and the ramp rumble.
 func loops() -> Dictionary:
-	return {"calm": _music(false), "hot": _music(true), "wind": _wind_loop(), "rumble": _rumble_loop()}
+	var m := _music()
+	return {"garage": m["garage"], "groove": m["groove"], "perc": m["perc"], "lead": m["lead"], "wind": _wind_loop(), "rumble": _rumble_loop()}
 
 # ---------- The key ----------
 
@@ -63,9 +67,9 @@ func _build_effects_into(clips: Dictionary) -> void:
 	for k in 5:
 		un = _mix_at(un, _bell(note_hz([5, 7, 8, 10, 12][k]), 0.9, 1.0, 0.9), int(k * 0.12 * rate))
 	clips["unlock"] = _norm(_reverb(un, 0.45, 0.8), LVL_BIG)
-	# Scrap: bright-but-soft bell plinks; a streak of pickups climbs the scale (the game quantizes them to the music).
+	# Scrap: a short tin-and-ukulele pluck; a streak of pickups climbs the scale (the game quantizes them to the music).
 	for k in STEPS:
-		clips["clink_%d" % k] = _norm(_reverb(_bell(note_hz(7 + k), 0.45, 1.0, 1.0), 0.25, 0.35), LVL_GAME * 0.8)
+		clips["clink_%d" % k] = _norm(_reverb(_tinpluck(note_hz(5 + k), 0.3), 0.2, 0.3), LVL_GAME * 0.8)
 	# Bounce pad: a rubbery sine gliding up to G with a quick wobble.
 	clips["boing"] = _norm(_lp(_glide(note_hz(-2), note_hz(3), 0.34, 14.0), 1800.0), LVL_GAME)
 	# Updraft fan: air rushing up.
@@ -85,20 +89,27 @@ func _build_effects_into(clips: Dictionary) -> void:
 	clips["snap"] = _norm(_reverb(_mix_at(_pluck(note_hz(8), note_hz(3), 0.32), _knock(900.0, 0.03), 0), 0.2, 0.25), LVL_GAME)
 	# Catapult: a low whoosh and thud.
 	clips["swing"] = _norm(_reverb(_mix_at(_whoosh(0.45, 180.0, 520.0), _thud(0.35), int(0.3 * rate)), 0.2, 0.3), LVL_GAME)
-	# A boost ring: three quick rising bells (C, E, G).
+	# A boost ring: a quick plucked arpeggio up the key (C, E, G, C), on the beat.
 	var ring := PackedFloat32Array()
-	for k in 3:
-		ring = _mix_at(ring, _bell(note_hz(5 + k), 0.5, 1.0, 1.0), int(k * 0.07 * rate))
+	for k in 4:
+		ring = _mix_at(ring, _tinpluck(note_hz([5, 7, 8, 10][k]), 0.45), int(k * 0.0625 * rate))
 	clips["ring"] = _norm(_reverb(ring, 0.3, 0.4), LVL_GAME)
+	# A blimp skim: a whistle swooping up from G to C.
+	clips["skim"] = _norm(_reverb(_whistle(note_hz(10), 0.5, 1.0, note_hz(8)), 0.25, 0.3), LVL_GAME)
+	# A tailwind: a soft airy whistle rising a fifth (C to G) over a breath of wind.
+	clips["gust"] = _norm(_reverb(_mix_at(_whistle(note_hz(8), 0.7, 0.8, note_hz(5)), _whoosh(0.7, 300.0, 1100.0), 0), 0.3, 0.4), LVL_GAME * 0.85)
 	# A storm cloud: a soft low rumble swelling in.
 	clips["storm"] = _norm(_reverb(_mix_at(_whoosh(0.6, 120.0, 420.0), _thud(0.5), int(0.1 * rate)), 0.2, 0.3), LVL_GAME * 0.9)
 	# A new altitude band: a small two-note chime (G then C).
 	clips["band"] = _norm(_reverb(_mix_at(_bell(note_hz(3), 0.35, 1.0, 0.8), _bell(note_hz(5), 0.5, 0.9, 0.8), int(0.08 * rate)), 0.25, 0.3), LVL_UI * 1.4)
-	# A joke find: a quick silly run up the scale and a wobbling top note.
+	# A joke find: the game plays a ping on the next sixteenth and this fanfare on the next bar line: a silly plucked run up
+	# the key (all pentatonic, so it suits every chord of the loop) into a whistled, wobbling top note.
 	var fnd := PackedFloat32Array()
-	for k in 5:
-		fnd = _mix_at(fnd, _bell(note_hz([5, 7, 8, 9, 10][k]), 0.8 if k == 4 else 0.35, 1.0, 1.0), int(k * 0.075 * rate))
+	for k in 6:
+		fnd = _mix_at(fnd, _tinpluck(note_hz([5, 7, 8, 9, 10, 12][k]), 0.4), int(k * 0.0625 * rate))
+	fnd = _mix_at(fnd, _whistle(note_hz(12), 0.8, 1.0, note_hz(10)), int(0.4 * rate))
 	clips["find"] = _norm(_reverb(fnd, 0.4, 0.7), LVL_BIG)
+	clips["find_ping"] = _norm(_reverb(_mix_at(_tinpluck(note_hz(8), 0.25), _tinpluck(note_hz(10), 0.35), int(0.06 * rate)), 0.2, 0.3), LVL_GAME)
 	# Rocket sled: a big low swell.
 	clips["ignite"] = _norm(_reverb(_swell(1.1), 0.25, 0.4), LVL_BIG * 0.9)
 
@@ -200,43 +211,281 @@ func _noise_burst(dur: float, fc: float) -> PackedFloat32Array:
 		out[i] = noise * exp(-float(i) / rate * 14.0) * _win(i, n, a_n, r_n)
 	return _lp(_lp(out, fc), fc)
 
-## An 8-beat loop (6 s) in C major: C, Am, F, G, two beats each. The calm layer is a warm pad with a soft bass; the intense
-## layer is a plucked pentatonic arpeggio with a very soft pulse underneath. Both loops are seamless, and equally long.
-func _music(hot: bool) -> PackedFloat32Array:
-	var n := int(BEAT * 8.0 * rate)
+# ---------- The music: Plane-Launch's own theme ----------
+# 120 BPM, four bars of four beats (8 s): C, Am, F, G, one chord a bar, and one tune (docs/style.md, "Plane-Launch's music").
+# Junkyard flavour: tin cans and hand claps for percussion, a plucky bass, ukulele strums and a whistled lead. Every layer is
+# one loop of the same length starting on the same downbeat, so any mix of them is in time, and in one key.
+
+const ROOTS := [65.41, 55.0, 87.31, 98.0]                    # bass roots: C2, A1, F2, G2
+const UKE := [[196.0, 261.63, 329.63, 392.0], [220.0, 261.63, 329.63, 440.0], [220.0, 261.63, 349.23, 440.0], [196.0, 293.66, 392.0, 493.88]]
+const PAD := [[130.81, 196.0, 261.63, 329.63], [110.0, 164.81, 220.0, 261.63], [87.31, 130.81, 174.61, 220.0], [98.0, 146.83, 196.0, 246.94]]
+# the tune: [bar, sixteenth, scale degree (note_hz), length in sixteenths]
+const TUNE := [
+	[0, 0, 7, 3], [0, 3, 8, 3], [0, 6, 9, 2], [0, 8, 8, 3], [0, 11, 7, 2], [0, 13, 6, 3],
+	[1, 0, 10, 3], [1, 3, 9, 3], [1, 6, 8, 2], [1, 8, 9, 4], [1, 12, 7, 4],
+	[2, 0, 9, 3], [2, 3, 8, 3], [2, 6, 7, 2], [2, 8, 8, 3], [2, 11, 9, 2], [2, 13, 10, 3],
+	[3, 0, 11, 4], [3, 4, 10, 2], [3, 6, 9, 2], [3, 8, 8, 4], [3, 12, 6, 2], [3, 14, 7, 2]]
+# the bass: [sixteenth, 0 root / 1 octave / 2 fifth, length in sixteenths], the same every bar (bouncy, syncopated)
+const BASS := [[0, 0, 3], [3, 0, 2], [6, 1, 2], [8, 2, 3], [10, 0, 2], [12, 0, 2], [14, 1, 2]]
+
+## The four music layers, each exactly LOOP long and seamless: garage (the light theme), groove (bass, tin-can kick, hand
+## claps, ukulele off-beats), perc (more percussion) and lead (the whistled tune with a pluck doubling it).
+func _music() -> Dictionary:
+	var n := int(LOOP * rate)
+	var sx := BEAT / 4.0
+	var garage := PackedFloat32Array()
+	var groove := PackedFloat32Array()
+	var perc := PackedFloat32Array()
+	var lead := PackedFloat32Array()
+	garage.resize(n)
+	groove.resize(n)
+	perc.resize(n)
+	lead.resize(n)
+	var kick := _kick()
+	var clap := _clap(1.0)
+	var soft_clap := _clap(0.6)
+	var tin_hi := _tin(note_hz(8), 0.09)
+	var tin_lo := _tin(note_hz(5), 0.09)
+	var shake := _shaker(1.0)
+	var shake_soft := _shaker(0.55)
+	for bar in 4:
+		var b0 := float(bar) * BAR
+		# the pad bed: keeps the garage alive between plucks
+		var pad := _padchord(PAD[bar], BAR + 0.5)
+		_put(garage, pad, int((b0 - 0.25) * rate), 0.55)
+		# bass: full in the groove, roots only (and softer) in the garage
+		for bp in BASS:
+			var root: float = ROOTS[bar]
+			var f: float = root * (1.0 if bp[1] == 0 else 2.0 if bp[1] == 1 else 1.5)
+			var note := _bass(f, float(bp[2]) * sx * 1.4)
+			var at := int((b0 + float(bp[0]) * sx) * rate)
+			_put(groove, note, at, 1.0)
+			if bp[0] == 0 or bp[0] == 8:
+				_put(garage, note, at, 0.55)
+		# tin-can kick on 1, the "and" of 2 and 3, hand claps on 2 and 4
+		for k in [0, 6, 8]:
+			_put(groove, kick, int((b0 + float(k) * sx) * rate), 1.0 if k != 6 else 0.7)
+		_put(groove, clap, int((b0 + 4.0 * sx) * rate), 0.8)
+		_put(groove, clap, int((b0 + 12.0 * sx) * rate), 0.8)
+		_put(garage, soft_clap, int((b0 + 4.0 * sx) * rate), 0.35)
+		_put(garage, soft_clap, int((b0 + 12.0 * sx) * rate), 0.35)
+		# ukulele: up-strums on the "and" of every beat (a skank) in the groove, two soft down-strums in the garage
+		for k in [2, 6, 10, 14]:
+			_put(groove, _strum(UKE[bar], 0.34, 0.016, false), int((b0 + float(k) * sx) * rate), 0.55)
+		for k in [4, 12]:
+			_put(garage, _strum(UKE[bar], 0.7, 0.02, true), int((b0 + float(k) * sx) * rate), 0.5)
+		# extra percussion: shaker sixteenths, tin cans on the off-beats, a ghost clap before the bar line
+		for k in 16:
+			_put(perc, shake if k % 4 == 2 else shake_soft, int((b0 + float(k) * sx) * rate), 0.7 if k % 2 == 0 else 0.35)
+		for k in [2, 7, 10, 15]:
+			_put(perc, tin_hi if k != 7 else tin_lo, int((b0 + float(k) * sx) * rate), 0.8)
+		_put(perc, soft_clap, int((b0 + 14.0 * sx) * rate), 0.5)
+		_put(perc, tin_lo, int((b0 + 9.0 * sx) * rate), 0.5)
+	for tn_note in TUNE:
+		var at2 := int((float(tn_note[0]) * BAR + float(tn_note[1]) * sx) * rate)
+		var f2 := note_hz(tn_note[2])
+		var len_s := float(tn_note[3]) * sx
+		_put(lead, _whistle(f2, len_s + 0.12, 1.0, f2 * 0.94), at2, 1.0)
+		_put(lead, _tinpluck(f2 * 0.5, 0.35), at2, 0.45)           # a soft pluck an octave down under every whistle note
+		if tn_note[1] == 0 or tn_note[1] == 8:
+			_put(garage, _tinpluck(f2, 0.5), at2, 0.9)         # the garage plays the tune's main notes on soft plucks
+	garage = _norm(_reverb_loop(garage, 0.35), 0.5)
+	groove = _reverb_loop(groove, 0.2)
+	perc = _reverb_loop(perc, 0.15)
+	lead = _reverb_loop(lead, 0.35)
+	# one gain for the three flight layers (so their balance is the one written above): the groove peaks at 0.5
+	var g := 0.5 / _peak(groove)
+	return {"garage": garage, "groove": _scale(groove, g), "perc": _scale(perc, g * 1.1), "lead": _scale(lead, g * 0.5)}
+
+## Add `src` * `gain` into the loop `dst` at sample `at`, wrapping round the end (so tails run into the start of the loop).
+func _put(dst: PackedFloat32Array, src: PackedFloat32Array, at: int, gain: float) -> void:
+	var n := dst.size()
+	for i in src.size():
+		dst[(at + i) % n] += src[i] * gain
+
+func _peak(x: PackedFloat32Array) -> float:
+	var m := 0.0001
+	for v in x:
+		m = maxf(m, absf(v))
+	return m
+
+func _scale(x: PackedFloat32Array, g: float) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	out.resize(x.size())
+	for i in x.size():
+		out[i] = x[i] * g
+	return out
+
+## A plucky bass: a sine with a little second and third harmonic, a quick decay and a tiny pitch settle, low-passed.
+func _bass(f: float, dur: float) -> PackedFloat32Array:
+	var n := int(dur * rate)
 	var out := PackedFloat32Array()
 	out.resize(n)
-	if not hot:
-		var chords := [[130.81, 261.63, 329.63, 392.0], [110.0, 220.0, 261.63, 329.63], [87.31, 174.61, 220.0, 261.63], [98.0, 196.0, 246.94, 293.66]]
-		var seg := 2.0 * BEAT
-		for c in 4:
-			var start := c * seg - 0.25
-			var length := seg + 0.5
-			var start_i := int(round(start * rate))
-			for f_v in chords[c]:
-				var f: float = f_v
-				for i in int(length * rate):
-					var t := float(i) / rate
-					var w := minf(smoothstep(0.0, 0.45, t), smoothstep(0.0, 0.45, length - t))
-					var idx := posmod(start_i + i, n)
-					var ph: float = TAU * f * (start + t)
-					out[idx] += (sin(ph) + 0.25 * sin(2.0 * ph)) * w * (0.28 if f > 150.0 else 0.4)
-		return _norm(out, 0.35)
-	var arps := [[5, 7, 8, 7], [4, 5, 7, 5], [4, 5, 6, 5], [3, 6, 8, 6]]
-	var eighth := BEAT * 0.5
-	for c in 4:
-		for k in 4:
-			var at := int((c * 4 + k) * eighth * rate)
-			var note := _bell(note_hz(arps[c][k]), 0.9, 0.55 if k > 0 else 0.7, 0.5)
-			for i in note.size():
-				out[posmod(at + i, n)] += note[i]
-	for b in 8:
-		var at2 := int(b * BEAT * rate)
-		for i in int(0.22 * rate):
-			var t2 := float(i) / rate
-			out[posmod(at2 + i, n)] += 0.22 * sin(TAU * lerpf(80.0, 50.0, minf(t2 * 6.0, 1.0)) * t2) * exp(-t2 * 14.0) * smoothstep(0.0, 0.012, t2)
-	out = _reverb_loop(out, 0.3)
-	return _norm(out, 0.35)
+	var a_n := int(0.004 * rate)
+	var r_n := int(0.03 * rate)
+	var ph := 0.0
+	for i in n:
+		var t := float(i) / rate
+		ph += TAU * f * (1.0 + 0.03 * exp(-t * 40.0)) / rate
+		out[i] = (sin(ph) + 0.45 * sin(2.0 * ph) + 0.15 * sin(3.0 * ph)) * exp(-t * 8.0) * _win(i, n, a_n, r_n)
+	return _norm(_lp(out, 700.0), 0.5)
+
+## The tin-can kick: a pitch-dropping thump with the hollow ring of a can on top.
+func _kick() -> PackedFloat32Array:
+	var n := int(0.24 * rate)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var a_n := int(0.004 * rate)
+	var r_n := int(0.05 * rate)
+	var ph := 0.0
+	for i in n:
+		var t := float(i) / rate
+		ph += TAU * (62.0 + 95.0 * exp(-t * 26.0)) / rate
+		out[i] = (sin(ph) * exp(-t * 14.0) + 0.22 * sin(TAU * 410.0 * t) * exp(-t * 60.0) + 0.1 * sin(TAU * 986.0 * t) * exp(-t * 80.0)) * _win(i, n, a_n, r_n)
+	return _norm(_lp(out, 1500.0), 0.7)
+
+## A hand clap: three quick bursts of band-limited noise and a short tail (soft starts: no clicks).
+func _clap(amp: float) -> PackedFloat32Array:
+	var n := int(0.22 * rate)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var seed_v := 31337
+	var lo := 0.0
+	var hi := 0.0
+	var fa := 1.0 - exp(-TAU * 3000.0 / rate)
+	var fb := 1.0 - exp(-TAU * 700.0 / rate)
+	var r_n := int(0.05 * rate)
+	for i in n:
+		var t := float(i) / rate
+		seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
+		var noise := float(seed_v) / 1073741823.5 - 1.0
+		lo += (noise - lo) * fa
+		hi += (lo - hi) * fb
+		var e := 0.0
+		for tk in [0.0, 0.012, 0.025]:
+			if t >= tk:
+				e += exp(-(t - tk) * 110.0) * smoothstep(0.0, 0.004, t - tk)
+		e += exp(-(t - 0.025) * 20.0) * 0.35 * smoothstep(0.025, 0.04, t)
+		out[i] = (lo - hi) * e * _win(i, n, 1, r_n)
+	return _norm(_lp(out, 3200.0), 0.6 * amp)
+
+## A shaker: a very short breath of band-limited noise.
+func _shaker(amp: float) -> PackedFloat32Array:
+	var n := int(0.09 * rate)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var seed_v := 777
+	var lo := 0.0
+	var hi := 0.0
+	var fa := 1.0 - exp(-TAU * 3200.0 / rate)
+	var fb := 1.0 - exp(-TAU * 1500.0 / rate)
+	for i in n:
+		var t := float(i) / rate
+		seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
+		var noise := float(seed_v) / 1073741823.5 - 1.0
+		lo += (noise - lo) * fa
+		hi += (lo - hi) * fb
+		out[i] = (lo - hi) * exp(-t * 55.0) * smoothstep(0.0, 0.006, t) * _win(i, n, 1, int(0.03 * rate))
+	return _norm(_lp(_lp(out, 3000.0), 3000.0), 0.3 * amp)
+
+## A tuned tin can: a short, hollow, slightly metallic knock at pitch f.
+func _tin(f: float, dur: float) -> PackedFloat32Array:
+	var n := int(dur * rate)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var a_n := int(0.003 * rate)
+	var r_n := int(0.03 * rate)
+	for i in n:
+		var t := float(i) / rate
+		out[i] = (sin(TAU * f * t) + 0.5 * sin(TAU * f * 2.32 * t) * exp(-t * 90.0) + 0.2 * sin(TAU * f * 3.9 * t) * exp(-t * 130.0)) * exp(-t * 45.0) * _win(i, n, a_n, r_n)
+	return _norm(_lp(_lp(out, 3200.0), 3200.0), 0.35)
+
+## A plucked tin-and-ukulele note: a bright-but-soft string-like pluck (a few decaying harmonics), low-passed.
+func _tinpluck(f: float, dur: float) -> PackedFloat32Array:
+	var n := int(dur * rate)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var a_n := int(0.003 * rate)
+	var r_n := int(minf(0.05, dur * 0.4) * rate)
+	for i in n:
+		var t := float(i) / rate
+		var v := sin(TAU * f * t) * exp(-t * 7.0)
+		if f * 2.0 < 3600.0:
+			v += 0.4 * sin(TAU * f * 2.0 * t) * exp(-t * 14.0)
+		if f * 3.0 < 3600.0:
+			v += 0.12 * sin(TAU * f * 3.0 * t) * exp(-t * 22.0)
+		out[i] = v * _win(i, n, a_n, r_n)
+	return _norm(_lp(out, 3600.0), 0.5)
+
+## A ukulele string (Karplus-Strong): a smoothed noise burst on a delay line that rings and fades; low-passed, soft start.
+func _uke(f: float, dur: float) -> PackedFloat32Array:
+	var n := int(dur * rate)
+	var d := maxi(int(round(rate / f - 0.5)), 2)
+	var buf := PackedFloat32Array()
+	buf.resize(d)
+	var seed_v := 4242 + int(f)
+	var sm := 0.0
+	for i in d:
+		seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
+		sm += 0.45 * ((float(seed_v) / 1073741823.5 - 1.0) - sm)
+		buf[i] = sm
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var idx := 0
+	var a_n := int(0.004 * rate)
+	var r_n := int(minf(0.06, dur * 0.3) * rate)
+	for i in n:
+		var nxt := (idx + 1) % d
+		out[i] = buf[idx] * _win(i, n, a_n, r_n)
+		buf[idx] = 0.996 * 0.5 * (buf[idx] + buf[nxt])
+		idx = nxt
+	return _norm(_lp(out, 3200.0), 0.5)
+
+## A ukulele strum: the chord's strings a few milliseconds apart, down (low to high) or up (high to low).
+func _strum(freqs: Array, dur: float, spread: float, down: bool) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	var cnt := freqs.size()
+	for k in cnt:
+		var idx := k if down else cnt - 1 - k
+		out = _mix_at(out, _uke(float(freqs[k]), dur), int(float(idx) * spread * rate))
+	return _norm(out, 0.5)
+
+## A whistle: a sine with a breath of noise that slides from `from_f` to `f` in the first 70 ms, then wobbles with a late
+## vibrato and fades; soft start and release. (Pass from_f = f for no slide.)
+func _whistle(f: float, dur: float, amp: float, from_f: float = 0.0) -> PackedFloat32Array:
+	var n := int(dur * rate)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var a_n := int(0.02 * rate)
+	var r_n := int(minf(0.08, dur * 0.4) * rate)
+	var slide := 0.07 if from_f > 0.0 and absf(from_f - f) < f * 0.2 else minf(0.35, dur * 0.7)
+	var f0 := from_f if from_f > 0.0 else f
+	var ph := 0.0
+	var seed_v := 909
+	var lp := 0.0
+	for i in n:
+		var t := float(i) / rate
+		seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
+		var noise := float(seed_v) / 1073741823.5 - 1.0
+		lp += 0.25 * (noise - lp)
+		var cur := lerpf(f0, f, smoothstep(0.0, slide, t))
+		ph += TAU * cur * (1.0 + 0.007 * sin(TAU * 5.5 * t) * smoothstep(0.1, 0.3, t)) / rate
+		out[i] = (sin(ph) + 0.06 * sin(2.0 * ph) + 0.05 * lp) * exp(-t * 1.1) * _win(i, n, a_n, r_n)
+	return _norm(_lp(out, 3000.0), 0.5 * amp)
+
+## One bar of pad: four sines, a raised-cosine in and out (so the bars blend into each other).
+func _padchord(freqs: Array, dur: float) -> PackedFloat32Array:
+	var n := int(dur * rate)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var a_n := int(0.45 * rate)
+	for i in n:
+		var t := float(i) / rate
+		var v := 0.0
+		for f in freqs:
+			v += sin(TAU * float(f) * t) + 0.2 * sin(TAU * float(f) * 2.0 * t)
+		out[i] = v * 0.12 * _win(i, n, a_n, a_n)
+	return out
 
 # ---------- Voices and DSP ----------
 
@@ -298,7 +547,7 @@ func _chord(freqs: Array, dur: float) -> PackedFloat32Array:
 		out[i] = v / freqs.size() * exp(-t * 1.6) * _win(i, n, a_n, r_n)
 	return out
 
-## A low thud: a sine falling from 120 to 55 Hz with a soft attack and a rounded decay.
+## A low thud: a sine falling from C3 to C2 with a soft attack and a rounded decay.
 func _thud(dur: float) -> PackedFloat32Array:
 	var n := int(dur * rate)
 	var out := PackedFloat32Array()
@@ -308,7 +557,7 @@ func _thud(dur: float) -> PackedFloat32Array:
 	var ph := 0.0
 	for i in n:
 		var t := float(i) / rate
-		ph += TAU * lerpf(120.0, 55.0, minf(t * 5.0, 1.0)) / rate
+		ph += TAU * lerpf(130.81, 65.41, minf(t * 5.0, 1.0)) / rate     # C3 down to C2: tuned to the key
 		out[i] = sin(ph) * exp(-t * 9.0) * _win(i, n, a_n, r_n)
 	return _lp(out, 500.0)
 
