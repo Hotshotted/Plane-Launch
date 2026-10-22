@@ -70,6 +70,18 @@ edge to edge.
 `T_FAST` 0.12 press/release, `T_BASE` 0.30 transitions, `T_SLOW` 0.5 celebrations, `STAGGER` 0.05. Ease-out-cubic for
 arrivals, ease-in-cubic for exits, ease-out-back for things that land. Anything skippable can be skipped.
 
+### Motion in practice (Phase 2)
+
+* **Buttons:** pressing squashes to 0.93 in `T_FAST` with a soft click; releasing bounces back (ease-out-back) with a bright blip and a light haptic. Back/close use the falling "back" sound.
+* **Directions:** forward things arrive by rising (sheets, from the bottom edge) or popping (results, pause: scale 0.8 to 1 with overshoot); leaving is the quick reverse (`T_FAST` x 1.5, ease-in). Switching between the launch screen and a flight fades; the upgrade cards then rise in with `STAGGER`.
+* **Buying:** the card flashes, the newest level dot pops, scrap hops from the counter to the glider, and when it lands the part bolts on (clank, sparks, glider pulse).
+* **Results:** the distance counts up with ticks, NEW BEST stamps in with a star burst and fanfare, the scrap flies to the counter, completed missions stamp in.
+* **Zones:** a tilted paper postcard (rusty border, flag stamp) sweeps in from the left and out to the right.
+* **Rusty:** the bubble's clipboard drops with a spring; his portrait nods, grins or facepalms.
+* **Launch screen:** Rusty hammers at a bench, a grinder throws sparks, a crow sits on the junk heap (no outlines on scenery).
+* **Pause:** a ghost button in the top-right corner; Resume (primary), Restart, Quit, and SFX and music sliders; the game also pauses by itself when the window loses focus.
+* Everything runs through one small animator in `Hud`, which the tests switch off (`Hud.animate`) so transitions complete instantly.
+
 ## Studio mark and loading
 
 The studio is **Clear Prop Games**; its mark is a bold three-blade propeller over a gold hub, with the name set in

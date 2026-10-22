@@ -42,6 +42,17 @@ const C_INK := Style.PAPER_INK
 const C_INK_SOFT := Style.PAPER_SOFT
 const C_ON_GO := Color.WHITE
 
+## Motion: when off (the smoke tests) every transition and celebration completes instantly.
+static var animate := true
+var sfx: Sfx                       # set by Main before the Hud enters the tree
+var buzz := Callable()             # Main's haptics: buzz.call(milliseconds)
+signal pause_pressed
+signal resume_pressed
+signal restart_pressed
+signal quit_pressed
+signal volume_changed(bus: String, value: float)
+signal fx_arrived(tag: String)     # the first coin of a flying batch landed ("buy": bolt the part on)
+
 var mode := MODE_SHOP
 
 # ---- flight ----
@@ -173,6 +184,10 @@ var intro_active := false
 
 func _ready() -> void:
 	layer = 10
+	fx_arrived.connect(func(tag: String):
+		if tag == "results":
+			_shop_scrap.text = "SCRAP  %s" % Tuning.fmt(Save.scrap)
+			_scrap_pop = 1.0)
 	Style.detect_safe(Vector2(1080, 1920))
 	_make_styles()
 	_build_flight_hud()
@@ -181,6 +196,8 @@ func _ready() -> void:
 	_build_results()
 	_build_splash()
 	_build_ad_screen()
+	_build_pause()
+	_build_fx_pool()
 	_build_intro()
 	move_child(_ad_screen, _splash.get_index())   # the splash stays on top of it during the pre-warm
 	_build_stamp()
@@ -194,7 +211,7 @@ func _apply_safe() -> void:
 	var sb := Style.safe_bottom
 	var sl := Style.safe_left
 	var sr := Style.safe_right
-	for c in [_dist, _best, _toast, _scrim, _top_row, _shop_bar["row"], _ad_boost_btn, _bubble, _clip]:
+	for c in [_dist, _best, _toast, _scrim, _top_row, _shop_bar["row"], _ad_boost_btn, _bubble, _clip, _pause_btn]:
 		c.offset_top += st
 		c.offset_bottom += st
 	for c in [_boost_panel, _boost_pips]:
@@ -210,13 +227,14 @@ func _apply_safe() -> void:
 		c.offset_left += sl
 	for c in [_top_row, _shop_bar["row"]]:
 		c.offset_right -= sr
-	for c in [_bubble, _clip, _boost_panel]:
+	for c in [_bubble, _clip, _boost_panel, _pause_btn]:
 		c.offset_right -= sr
 	_boost_pips.offset_right -= sr
 	_boost_pips.offset_left -= sr
 	_boost_panel.offset_left -= sr
 	_bubble.offset_left -= sr
 	_clip.offset_left -= sr
+	_pause_btn.offset_left -= sr
 	_stamp.offset_top -= sb
 	_stamp.offset_left += sl
 
@@ -312,6 +330,7 @@ func _button(text: String, size: int, min_h: float, st: StyleBoxFlat, text_color
 	b.add_theme_font_override("font", Style.display() if size >= Style.SZ_M else Style.text())
 	b.focus_mode = Control.FOCUS_NONE
 	_style_button(b, st, text_color)
+	_wire_press(b)
 	return b
 
 ## Set a button to the accent (something to do), off (can't yet) or done (already so) look.
@@ -328,6 +347,133 @@ func _look(b: Button, kind: int, text: String) -> void:
 			_style_button(b, _sb_done, Style.TEXT_QUIET)
 			b.disabled = true
 	_place_icon(b)
+
+# ---------------------------------------------------------------------------------------------
+# Motion: press feel, transitions (one small animator, no tweens: it also runs under the tests' manual stepping)
+# ---------------------------------------------------------------------------------------------
+
+var _anims: Array[Dictionary] = []
+
+# flying scrap (buy sequence, results), results celebration, pause
+const FLY := 10
+const BURST := 16
+var _fly_nodes: Array[GlyphView] = []
+var _fly_from := PackedVector2Array()
+var _fly_to := PackedVector2Array()
+var _fly_t := PackedFloat32Array()      # < 0: waiting; > 1: done
+var _fly_first := PackedByteArray()
+var _fly_tag: Array[String] = []
+var _burst_nodes: Array[GlyphView] = []
+var _burst_vel := PackedVector2Array()
+var _burst_life := PackedFloat32Array()
+var _card_flash := PackedFloat32Array()
+var _card_base := PackedColorArray()
+var _last_for_react := {}
+var _res_t := -1.0
+var _res_stage := 0
+var _res_tick := 0.0
+var _res_target := 0
+var _res_scrap_value := 0
+var _scrap_pop := 0.0
+var _pause: Control
+var _pause_btn: Button
+var _pause_card: PanelContainer
+var _postcard_flag: GlyphView
+var pause_active := false
+var _warming_ui := false          # during the start-up pre-warm no transitions run
+
+## Squash on press, bounce on release, a soft click down and a bright blip up, a light buzz.
+func _wire_press(b: Button) -> void:
+	b.button_down.connect(func():
+		if b.disabled:
+			return
+		_play("press")
+		_start_anim(b, "press", true, Style.T_FAST, 0.0))
+	b.button_up.connect(func():
+		if not b.disabled:
+			_start_anim(b, "release", true, Style.T_BASE, 0.0))
+	b.pressed.connect(func():
+		_play(String(b.get_meta("snd", "tap")))
+		if buzz.is_valid():
+			buzz.call(12))
+
+func _play(sound: String) -> void:
+	if sfx != null:
+		sfx.play(sound)
+
+func _start_anim(c: Control, kind: String, on: bool, dur: float, delay: float) -> void:
+	if not animate:
+		return
+	for i in range(_anims.size() - 1, -1, -1):
+		if _anims[i]["c"] == c:
+			_anims.remove_at(i)
+	c.pivot_offset = c.size * 0.5 if kind != "rise" else Vector2(c.size.x * 0.5, c.size.y)
+	_anims.append({"c": c, "kind": kind, "on": on, "t": 0.0, "dur": dur, "delay": delay})
+
+## Show `c` with a transition: "pop" (a card or dialog: scales up with a little overshoot), "rise" (a sheet from the
+## bottom edge), "fade".
+func _open(c: Control, kind: String, delay: float = 0.0) -> void:
+	c.visible = true
+	if animate:
+		c.modulate.a = 0.0
+		_start_anim(c, kind, true, Style.T_BASE, delay)
+
+## Hide `c` with the matching exit (quicker, ease-in).
+func _close(c: Control, kind: String) -> void:
+	if not c.visible:
+		return
+	if animate:
+		_start_anim(c, kind, false, Style.T_FAST * 1.5, 0.0)
+	else:
+		c.visible = false
+
+func settle() -> void:
+	## Finish every running transition at once (tests, and a safe point before a rebuild).
+	for a in _anims:
+		_apply_anim(a, 1.0)
+	_anims.clear()
+
+func _apply_anim(a: Dictionary, u: float) -> void:
+	var c: Control = a["c"]
+	var kind: String = a["kind"]
+	var on: bool = a["on"]
+	match kind:
+		"press":
+			c.scale = Vector2.ONE * lerpf(1.0, 0.93, Style.ease_out_cubic(u))
+		"release":
+			c.scale = Vector2.ONE * lerpf(0.93, 1.0, Style.ease_out_back(u))
+		"stamp":
+			var e2 := Style.ease_out_back(u)
+			c.scale = Vector2.ONE * lerpf(2.6, 1.0, e2)
+			c.modulate.a = clampf(u * 4.0, 0.0, 1.0)
+			c.rotation = lerpf(-0.18, 0.0, Style.ease_out_cubic(u))
+		_:
+			var e := Style.ease_out_back(u) if kind == "pop" else Style.ease_out_cubic(u)
+			var k := e if on else 1.0 - Style.ease_in_cubic(u)
+			var from := 0.8 if kind == "pop" else (0.94 if kind == "rise" else 1.0)
+			c.scale = Vector2.ONE * lerpf(from, 1.0, k)
+			c.modulate.a = clampf(k if on else k, 0.0, 1.0)
+	if u >= 1.0:
+		if kind == "press":
+			return
+		c.scale = Vector2.ONE
+		c.modulate.a = 1.0
+		c.rotation = 0.0
+		if not on:
+			c.visible = false
+
+func _tick_anims(delta: float) -> void:
+	var i := 0
+	while i < _anims.size():
+		var a := _anims[i]
+		a["t"] = float(a["t"]) + delta
+		var u := clampf((float(a["t"]) - float(a["delay"])) / float(a["dur"]), 0.0, 1.0)
+		if float(a["t"]) >= float(a["delay"]):
+			_apply_anim(a, u)
+		if u >= 1.0 and float(a["t"]) >= float(a["delay"]):
+			_anims.remove_at(i)
+		else:
+			i += 1
 
 ## `st` with `extra` more left padding (cached).
 func _padded(st: StyleBoxFlat, extra: float) -> StyleBoxFlat:
@@ -410,14 +556,31 @@ func _build_flight_hud() -> void:
 	_stall.text = "STALL!"
 	_stall.visible = false
 	_flight_root.add_child(_stall)
-	_banner = _label(BODY, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER, 7)
+	# the zone postcard: paper with a rusty border and a stamp, tilted a little, sweeping across
+	_banner = _label(BODY, Style.PAPER_INK, HORIZONTAL_ALIGNMENT_CENTER, 0)
+	var pcs := _box(C_PAPER, Style.RUST_DARK, Style.R_M, 6)
+	pcs.content_margin_left = 40
+	pcs.content_margin_right = 120
+	pcs.content_margin_top = 24
+	pcs.content_margin_bottom = 24
+	_banner.add_theme_stylebox_override("normal", pcs)
 	_banner.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	_banner.offset_left = -520
-	_banner.offset_right = 520
-	_banner.offset_top = -560
-	_banner.offset_bottom = -380
+	_banner.offset_left = -460
+	_banner.offset_right = 460
+	_banner.offset_top = -620
+	_banner.offset_bottom = -360
+	_banner.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_banner.pivot_offset = Vector2(460, 130)
+	_banner.rotation = -0.035
 	_banner.visible = false
 	_flight_root.add_child(_banner)
+	_postcard_flag = _icon("flag", 84, Style.RUST)
+	_postcard_flag.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	_postcard_flag.offset_left = -112
+	_postcard_flag.offset_right = -28
+	_postcard_flag.offset_top = 28
+	_postcard_flag.offset_bottom = 112
+	_banner.add_child(_postcard_flag)
 	_hint = _label(BODY, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER, 8)
 	_hint.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
 	_hint.offset_left = -480
@@ -517,10 +680,11 @@ func toast(text: String) -> void:
 ## Big centred banner ("NEW ZONE!" ...), fading after about two seconds.
 func banner(text: String, color: Color) -> void:
 	_banner.text = text
-	_banner.add_theme_color_override("font_color", color)
+	_banner.add_theme_color_override("font_color", Style.RUST_DARK if color == C_ACCENT else Style.PAPER_INK)
 	_banner.modulate = Color.WHITE
 	_banner.visible = true
 	_banner_born = _time
+	_play("whoosh")
 
 ## Slingshot: the aim read-out and hint while pulling back.
 func show_aim(on: bool, power: float, angle: float) -> void:
@@ -747,6 +911,7 @@ func close_missions() -> void:
 	_clip_hold = 0.0
 
 func toggle_missions() -> void:
+	_rusty.react("nod")
 	if _clip_target > 0.5:
 		close_missions()
 	else:
@@ -865,6 +1030,7 @@ func _build_sheet() -> void:
 	head.add_child(_sheet_title)
 	var close := _button("CLOSE", SMALL, 64, _sb_tab)
 	close.custom_minimum_size = Vector2(180, 64)
+	close.set_meta("snd", "back")
 	close.pressed.connect(close_sheet)
 	head.add_child(close)
 	_sub_tabs = HBoxContainer.new()
@@ -1016,10 +1182,12 @@ func _make_row(page: Control) -> Dictionary:
 func show_tab(i: int) -> void:
 	_tab = i
 	if i == 0:   # the upgrades are on the main screen: 0 just closes the sheet
-		_sheet.visible = false
+		_close(_sheet, "rise")
 		return
 	close_missions()
-	_sheet.visible = true
+	if not _sheet.visible:
+		_play("whoosh")
+		_open(_sheet, "rise")
 	for k in _tab_pages.size():
 		_tab_pages[k].visible = k == i
 	_sheet_title.text = ["", "GARAGE", "GARAGE", "STYLE", "DAILY LAUNCH"][i]
@@ -1029,7 +1197,7 @@ func show_tab(i: int) -> void:
 		_style_button(_sub_buttons[k], _sb_accent if on else _sb_tab, C_ON_GO if on else C_TEXT)
 
 func close_sheet() -> void:
-	_sheet.visible = false
+	_close(_sheet, "rise")
 
 func set_style_cat(i: int) -> void:
 	_style_cat = i
@@ -1136,7 +1304,12 @@ func _build_results() -> void:
 
 func show_results(on: bool) -> void:
 	var closing := _results.visible and not on
-	_results.visible = on
+	if on and not _results.visible:
+		_open(_results, "pop")
+		_start_results_show()
+	elif closing:
+		_close(_results, "pop")
+		_res_t = -1.0
 	if closing:
 		for m in Save.missions:
 			if m.get("moved", false) or m.get("fresh", false):
@@ -1153,6 +1326,8 @@ func result_text() -> String:
 func _fill_results(last: Dictionary) -> void:
 	var daily: Dictionary = last.get("daily", {})
 	_res_caption.text = "DAILY LAUNCH" if daily.size() > 0 else "LANDED"
+	_res_target = int(last["distance"])
+	_res_scrap_value = int(last["earned"])
 	_res_dist.text = "%s m" % Tuning.fmt(last["distance"])
 	_res_badge.text = "NEW BEST!" if last["new_best"] else ""
 	_res_badge.visible = last["new_best"]
@@ -1193,6 +1368,7 @@ func refresh_shop(last: Dictionary, boost_ready: bool = false) -> void:
 	if sk != _shop_bar_key:
 		_shop_bar_key = sk
 		_set_bar(_shop_bar, Save.zone_best, _zone_progress(Save.best_distance, Save.zone_best))
+	_last_for_react = last
 	if last.is_empty():
 		_rusty_says.text = ("Rusty: " + Rusty.GREETING) if Save.runs == 0 else "Rusty: Back for more? Beat these and I'll pay up."
 	else:
@@ -1213,7 +1389,9 @@ func refresh_shop(last: Dictionary, boost_ready: bool = false) -> void:
 		_card_pips[i].set_level(lv, int(u["max"]))
 		var can := Save.can_buy(id)
 		_card_styles[i].border_color = C_ACCENT if can else Style.INK
-		_card_styles[i].bg_color = C_CARD.lerp(C_ACCENT, 0.10) if can else C_CARD
+		_card_base[i] = C_CARD.lerp(C_ACCENT, 0.10) if can else C_CARD
+		if _card_flash[i] <= 0.0:
+			_card_styles[i].bg_color = _card_base[i]
 		_card_styles[i].set_border_width_all(4 if can else 3)
 		if Save.is_maxed(id):
 			_look(_row_btn[i], 2, "MAX")
@@ -1396,9 +1574,22 @@ func _build_stamp() -> void:
 # ---------------------------------------------------------------------------------------------
 
 func set_mode(m: int) -> void:
+	var changed := m != mode
 	mode = m
 	_flight_root.visible = m == MODE_FLIGHT
 	_shop_root.visible = m == MODE_SHOP
+	show_pause(false)
+	if changed and animate and not _warming_ui:
+		# screens fade in; the upgrade cards then rise in one after another
+		var root: Control = _flight_root if m == MODE_FLIGHT else _shop_root
+		root.modulate.a = 0.0
+		_start_anim(root, "fade", true, Style.T_BASE, 0.0)
+		if m == MODE_SHOP:
+			for i in _card_panels.size():
+				_card_panels[i].modulate.a = 0.0
+				_start_anim(_card_panels[i], "rise", true, Style.T_BASE, 0.08 + i * Style.STAGGER)
+			_launch_btn.modulate.a = 0.0
+			_start_anim(_launch_btn, "rise", true, Style.T_BASE, 0.08 + _card_panels.size() * Style.STAGGER)
 	_stall.visible = false
 	_toast.visible = false
 	_banner.visible = false
@@ -1417,6 +1608,7 @@ func set_mode(m: int) -> void:
 
 func show_splash(on: bool) -> void:
 	_splash.visible = on
+	_warming_ui = on
 
 func _build_intro() -> void:
 	_intro = Control.new()
@@ -1518,6 +1710,7 @@ func prewarm_show(on: bool) -> void:
 	_toast.visible = on
 	_banner.visible = on
 	_ad_screen.visible = on   # (drawn under the splash)
+	_pause.visible = on
 	for p in _pop_labels:
 		p.visible = on
 		p.text = "BOUNCE! +12 NEW BEST!"
@@ -1546,11 +1739,324 @@ func prewarm_show(on: bool) -> void:
 		_hint.visible = false
 
 # ---------------------------------------------------------------------------------------------
+# Flying scrap, the buy sequence, the results celebration
+# ---------------------------------------------------------------------------------------------
+
+func _build_fx_pool() -> void:
+	for i in FLY:
+		var g := _icon("scrap", 48, Style.ACCENT)
+		g.visible = false
+		g.pivot_offset = Vector2(24, 24)
+		add_child(g)
+		_fly_nodes.append(g)
+	_fly_from.resize(FLY)
+	_fly_to.resize(FLY)
+	_fly_t.resize(FLY)
+	_fly_first.resize(FLY)
+	_fly_tag.resize(FLY)
+	_fly_t.fill(2.0)
+	for i in BURST:
+		var b := _icon("star", 44, Style.ACCENT)
+		b.visible = false
+		b.pivot_offset = Vector2(22, 22)
+		_results.add_child(b)
+		_burst_nodes.append(b)
+	_burst_vel.resize(BURST)
+	_burst_life.resize(BURST)
+	_card_flash.resize(Tuning.upgrades.size())
+	_card_base.resize(Tuning.upgrades.size())
+
+## Scrap hops from `from` to `to` in a little arc; the first coin to land emits fx_arrived(tag).
+func fly_scrap(from: Vector2, to: Vector2, n: int, tag: String) -> void:
+	if not animate:
+		fx_arrived.emit(tag)
+		return
+	var placed := 0
+	for i in FLY:
+		if placed >= n:
+			break
+		if _fly_t[i] >= 1.0:
+			_fly_from[i] = from + Vector2((randf() - 0.5) * 50.0, (randf() - 0.5) * 30.0)
+			_fly_to[i] = to
+			_fly_t[i] = -0.07 * placed
+			_fly_first[i] = 1 if placed == 0 else 0
+			_fly_tag[i] = tag
+			_fly_nodes[i].visible = true
+			placed += 1
+
+func _update_fly(delta: float) -> void:
+	for i in FLY:
+		var t := _fly_t[i]
+		if t >= 1.0:
+			continue
+		t += delta / 0.55
+		_fly_t[i] = t
+		var g := _fly_nodes[i]
+		if t < 0.0:
+			g.position = _fly_from[i] - Vector2(24, 24)
+			continue
+		if t >= 1.0:
+			g.visible = false
+			_play("clink")
+			if _fly_first[i] == 1:
+				fx_arrived.emit(_fly_tag[i])
+			continue
+		var e := Style.ease_out_cubic(t) * 0.5 + t * 0.5
+		var a: Vector2 = _fly_from[i]
+		var b: Vector2 = _fly_to[i]
+		var m := (a + b) * 0.5 + Vector2(0, -160)
+		var p := a.lerp(m, e).lerp(m.lerp(b, e), e)
+		g.position = p - Vector2(24, 24)
+		g.scale = Vector2.ONE * (1.0 + 0.4 * sin(t * PI))
+
+func _counter_pos() -> Vector2:
+	return _top_row.get_global_rect().position + Vector2(40.0, 34.0)
+
+## The buy sequence for upgrade card `i`: the card flashes, the newest level dot pops, scrap flies from the counter to
+## the glider (`target`, screen position) and when it lands Main bolts the part on (fx_arrived "buy").
+func buy_fx(i: int, target: Vector2) -> void:
+	_play("buy")
+	if i >= 0 and i < _card_flash.size():
+		_card_flash[i] = 1.0
+		_card_pips[i].start_pop()
+		_start_anim(_card_panels[i], "release", true, Style.T_BASE, 0.0)
+	fly_scrap(_counter_pos(), target, 5, "buy")
+
+func _update_cards(delta: float) -> void:
+	for i in _card_flash.size():
+		if _card_flash[i] > 0.0:
+			_card_flash[i] = maxf(_card_flash[i] - delta * 3.0, 0.0)
+			_card_styles[i].bg_color = _card_base[i].lerp(Color.WHITE, _card_flash[i] * 0.55)
+
+func _start_results_show() -> void:
+	var last := _last_for_react
+	var mood := "nod"
+	if not last.is_empty():
+		if last.get("new_best", false) or not last.get("missions", []).is_empty():
+			mood = "grin"
+		elif float(last["distance"]) < 40.0:
+			mood = "facepalm"
+	_res_rusty_pic.react(mood)
+	_res_stage = 0
+	_res_t = -1.0
+	if not animate:
+		return
+	_res_t = 0.0
+	_res_tick = 0.0
+	_res_dist.text = "0 m"
+	for c in [_res_badge, _res_scrap, _res_mcap, _res_missions]:
+		c.modulate.a = 0.0
+	_shop_scrap.text = "SCRAP  %s" % Tuning.fmt(maxf(Save.scrap - float(_res_scrap_value), 0.0))
+
+func _stamp_in(c: Control, delay: float = 0.0) -> void:
+	c.modulate.a = 0.0
+	_start_anim(c, "stamp", true, Style.T_SLOW, delay)
+
+func _update_results(delta: float) -> void:
+	if _res_t < 0.0 or not _results.visible:
+		return
+	_res_t += delta
+	var t := _res_t
+	if _res_stage == 0:
+		if t >= 0.3:
+			var u := clampf((t - 0.3) / 1.0, 0.0, 1.0)
+			_res_dist.text = "%s m" % Tuning.fmt(floorf(float(_res_target) * Style.ease_out_cubic(u)))
+			if t > _res_tick:
+				_res_tick = t + 0.07
+				_play("tick")
+			if u >= 1.0:
+				_res_stage = 1
+				_res_dist.text = "%s m" % Tuning.fmt(_res_target)
+				if _res_badge.visible:
+					_stamp_in(_res_badge)
+					_burst_at(_res_dist.get_global_rect().get_center() - _results.get_global_rect().position)
+					_play("best")
+					if buzz.is_valid():
+						buzz.call(40)
+	elif _res_stage == 1 and t >= 1.55:
+		_res_stage = 2
+		_res_scrap.modulate.a = 1.0
+		_start_anim(_res_scrap, "release", true, Style.T_BASE, 0.0)
+		fly_scrap(_res_scrap.get_global_rect().get_center(), _counter_pos(), 6, "results")
+	elif _res_stage == 2 and t >= 1.95:
+		_res_stage = 3
+		if _res_mcap.visible:
+			_res_mcap.modulate.a = 1.0
+			_stamp_in(_res_missions)
+			_play("stamp")
+			if buzz.is_valid():
+				buzz.call(30)
+	elif _res_stage == 3 and t >= 2.6:
+		_res_t = -1.0
+	for i in BURST:
+		if _burst_life[i] > 0.0:
+			_burst_life[i] -= delta
+			var n := _burst_nodes[i]
+			n.position += _burst_vel[i] * delta
+			_burst_vel[i] *= 1.0 - delta * 2.5
+			n.scale = Vector2.ONE * clampf(_burst_life[i] * 2.0, 0.0, 1.0)
+			if _burst_life[i] <= 0.0:
+				n.visible = false
+
+func _burst_at(center: Vector2) -> void:
+	for i in BURST:
+		var a := float(i) / BURST * TAU + randf() * 0.3
+		_burst_vel[i] = Vector2(cos(a), sin(a)) * (380.0 + randf() * 260.0)
+		_burst_life[i] = 0.9 + randf() * 0.3
+		_burst_nodes[i].position = center - Vector2(22, 22)
+		_burst_nodes[i].visible = true
+
+# ---------------------------------------------------------------------------------------------
+# PAUSE: a button in flight, and the pause card
+# ---------------------------------------------------------------------------------------------
+
+func _build_pause() -> void:
+	_pause_btn = Button.new()
+	_pause_btn.focus_mode = Control.FOCUS_NONE
+	_pause_btn.add_theme_font_size_override("font_size", SMALL)
+	_pause_btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	_pause_btn.offset_left = -136
+	_pause_btn.offset_right = -40
+	_pause_btn.offset_top = 40
+	_pause_btn.offset_bottom = 136
+	var gs := _ghost()
+	gs.bg_color = Color(Style.SURFACE_DARK, 0.7)
+	gs.set_corner_radius_all(Style.R_PILL)
+	_style_button(_pause_btn, gs, C_TEXT)
+	var pg := _icon("pause", 48, C_TEXT)
+	pg.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	pg.offset_left = -24
+	pg.offset_right = 24
+	pg.offset_top = -24
+	pg.offset_bottom = 24
+	_pause_btn.add_child(pg)
+	_wire_press(_pause_btn)
+	_pause_btn.pressed.connect(func(): pause_pressed.emit())
+	_flight_root.add_child(_pause_btn)
+	_pause = Control.new()
+	_full(_pause)
+	_pause.mouse_filter = Control.MOUSE_FILTER_STOP
+	_pause.visible = false
+	var dim := ColorRect.new()
+	dim.color = Color(Style.SCRIM, 0.78)
+	_full(dim)
+	_pause.add_child(dim)
+	_pause_card = PanelContainer.new()
+	_pause_card.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_pause_card.offset_left = -430
+	_pause_card.offset_right = 430
+	_pause_card.grow_vertical = Control.GROW_DIRECTION_BOTH
+	var cs := _box(C_PANEL, Style.LINE, Style.R_L, 3)
+	cs.content_margin_left = 40
+	cs.content_margin_right = 40
+	cs.content_margin_top = 32
+	cs.content_margin_bottom = 40
+	_pause_card.add_theme_stylebox_override("panel", cs)
+	_pause.add_child(_pause_card)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 20)
+	_pause_card.add_child(v)
+	var title := _label(HERO, C_TEXT)
+	title.text = "PAUSED"
+	v.add_child(title)
+	var resume := _button("RESUME", BODY, 130, _sb_accent, C_ON_GO)
+	resume.set_meta("always", true)
+	_attach_icon(resume, "play", 56, C_ON_GO)
+	resume.pressed.connect(func(): resume_pressed.emit())
+	v.add_child(resume)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	v.add_child(row)
+	var restart := _button("RESTART", SMALL, 96, _sb_card)
+	restart.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	restart.set_meta("always", true)
+	_attach_icon(restart, "restart", 40, C_ON_GO)
+	restart.pressed.connect(func(): restart_pressed.emit())
+	row.add_child(restart)
+	var quit := _button("QUIT", SMALL, 96, _sb_tab)
+	quit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	quit.set_meta("always", true)
+	quit.set_meta("snd", "back")
+	_attach_icon(quit, "home", 40, C_TEXT)
+	quit.pressed.connect(func(): quit_pressed.emit())
+	row.add_child(quit)
+	for entry in [["speaker", "SFX", Save.sfx_vol], ["note", "Music", Save.music_vol]]:
+		var sr := HBoxContainer.new()
+		sr.add_theme_constant_override("separation", 18)
+		sr.add_child(_icon(entry[0], 54, C_MUTED))
+		var sl := _make_slider(entry[2])
+		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var bus: String = entry[1]
+		sl.value_changed.connect(func(val: float): volume_changed.emit(bus, val))
+		sr.add_child(sl)
+		v.add_child(sr)
+		_sliders[bus] = sl
+	add_child(_pause)
+
+var _sliders := {}
+var _knob: ImageTexture
+
+func _make_slider(value: float) -> HSlider:
+	var sl := HSlider.new()
+	sl.min_value = 0.0
+	sl.max_value = 1.0
+	sl.step = 0.05
+	sl.value = value
+	sl.focus_mode = Control.FOCUS_NONE
+	sl.custom_minimum_size = Vector2(0, 64)
+	var track := StyleBoxFlat.new()
+	track.bg_color = Color(Style.INK, 0.7)
+	track.set_corner_radius_all(14)
+	track.content_margin_top = 14
+	track.content_margin_bottom = 14
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Style.SUCCESS
+	fill.set_corner_radius_all(14)
+	fill.content_margin_top = 14
+	fill.content_margin_bottom = 14
+	sl.add_theme_stylebox_override("slider", track)
+	sl.add_theme_stylebox_override("grabber_area", fill)
+	sl.add_theme_stylebox_override("grabber_area_highlight", fill)
+	if _knob == null:
+		var img := Image.create(56, 56, false, Image.FORMAT_RGBA8)
+		for y in 56:
+			for x in 56:
+				var d := Vector2(x - 27.5, y - 27.5).length()
+				var col := Color(0, 0, 0, 0)
+				if d < 26.0:
+					col = Style.INK if d > 22.5 else Color.WHITE
+				img.set_pixel(x, y, col)
+		_knob = ImageTexture.create_from_image(img)
+	for gn in ["grabber", "grabber_highlight", "grabber_disabled"]:
+		sl.add_theme_icon_override(gn, _knob)
+	return sl
+
+func show_pause(on: bool) -> void:
+	pause_active = on
+	if on:
+		_sliders["SFX"].set_value_no_signal(Save.sfx_vol)
+		_sliders["Music"].set_value_no_signal(Save.music_vol)
+		_pause.visible = true
+		_play("pause")
+		if animate:
+			_pause_card.modulate.a = 0.0
+			_start_anim(_pause_card, "pop", true, Style.T_BASE, 0.0)
+	else:
+		_pause.visible = false
+
+## Screen rectangle of the pause button (for Main's hit test); empty outside flight.
+func pause_rect() -> Rect2:
+	if mode != MODE_FLIGHT or not _flight_root.visible:
+		return Rect2()
+	return _pause_btn.get_global_rect()
+
+# ---------------------------------------------------------------------------------------------
 # Per frame, ?perf
 # ---------------------------------------------------------------------------------------------
 
 func _process(delta: float) -> void:
 	_time += delta
+	_tick_anims(delta)
 	if intro_active:
 		_animate_intro(delta)
 	_animate_clip(delta)
@@ -1580,12 +2086,25 @@ func _process(delta: float) -> void:
 			_toast.modulate = tm
 	if _banner.visible and mode == MODE_FLIGHT:
 		var ba := _time - _banner_born
-		if ba > 2.4:
+		if ba > 2.5:
 			_banner.visible = false
 		else:
-			var bm := _banner.modulate
-			bm.a = clampf(2.4 - ba, 0.0, 1.0)
-			_banner.modulate = bm
+			# sweeps in from the left, rests, sweeps out to the right
+			var dx := 0.0
+			if animate:
+				if ba < 0.45:
+					dx = lerpf(-1500.0, 0.0, Style.ease_out_back(ba / 0.45))
+				elif ba > 2.05:
+					dx = lerpf(0.0, 1500.0, Style.ease_in_cubic((ba - 2.05) / 0.45))
+			_banner.offset_left = -460.0 + dx
+			_banner.offset_right = 460.0 + dx
+			_banner.rotation = -0.035 + sin(ba * 3.0) * 0.004
+	_update_fly(delta)
+	_update_cards(delta)
+	_update_results(delta)
+	_scrap_pop = maxf(_scrap_pop - delta * 3.0, 0.0)
+	_shop_scrap.pivot_offset = Vector2(0.0, _shop_scrap.size.y * 0.5)
+	_shop_scrap.scale = Vector2.ONE * (1.0 + 0.25 * _scrap_pop)
 	_update_perf(delta)
 
 func set_perf_extra(text: String) -> void:

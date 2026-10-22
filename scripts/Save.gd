@@ -39,6 +39,8 @@ var day_key_override := 0            # (tests set a day)
 var missions: Array = []             # three active missions (see Missions.gd)
 var missions_done := 0
 var zone_best := 0                  # index of the farthest zone ever reached
+var sfx_vol := 1.0                  # settings (pause menu sliders), 0..1
+var music_vol := 1.0
 var seen := {}                      # thing id -> true once its first-time popup was shown (saved when a run ends)
 
 func _ready() -> void:
@@ -52,6 +54,8 @@ func _defaults() -> void:
 	levels = {}
 	seen = {}
 	zone_best = 0
+	sfx_vol = 1.0
+	music_vol = 1.0
 	missions = []
 	missions_done = 0
 	frames_owned = {"scrapper": true}
@@ -124,6 +128,8 @@ func _apply(d: Dictionary) -> void:
 		for u in Tuning.upgrades:
 			levels[u["id"]] = clampi(int(lv.get(u["id"], 0)), 0, int(u["max"]))
 	zone_best = clampi(int(d.get("zone_best", 0)), 0, Zones.COUNT - 1)
+	sfx_vol = clampf(float(d.get("sfx_vol", 1.0)), 0.0, 1.0)
+	music_vol = clampf(float(d.get("music_vol", 1.0)), 0.0, 1.0)
 	missions_done = maxi(int(d.get("missions_done", 0)), 0)
 	var ms: Variant = d.get("missions", [])
 	if ms is Array:
@@ -173,7 +179,7 @@ func to_dict() -> Dictionary:
 			"frames_owned": frames_owned.duplicate(), "frame": frame, "launchers_owned": launchers_owned.duplicate(), "launcher": launcher,
 			"cosmetics_owned": cosmetics_owned.duplicate(), "paint": paint, "hat": hat, "trail": trail,
 			"daily_key": daily_key, "daily_target": daily_target, "daily_best": daily_best, "daily_claimed": daily_claimed, "daily_plays": daily_plays,
-			"flights_since_ad": flights_since_ad}
+			"flights_since_ad": flights_since_ad, "sfx_vol": sfx_vol, "music_vol": music_vol}
 
 func save_game() -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)

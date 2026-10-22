@@ -71,10 +71,22 @@ static func comment(ctx: Dictionary) -> String:
 
 # ---- the portrait ----
 var _t := 0.0
+var mood := "idle"            # idle, nod, grin, facepalm: a reaction that plays for a moment, then back to idle
+var _mood_t := 0.0
+
+## React for about a second: "nod" (a good run), "grin" (a record, a mission), "facepalm" (a bad one).
+func react(m: String) -> void:
+	mood = m
+	_mood_t = 0.0
+	queue_redraw()
 
 func _process(delta: float) -> void:
 	if is_visible_in_tree():
 		_t += delta
+		if mood != "idle":
+			_mood_t += delta
+			if _mood_t > 1.4:
+				mood = "idle"
 		queue_redraw()
 
 func _poly(pts: PackedVector2Array, col: Color) -> void:
@@ -94,6 +106,12 @@ func _draw() -> void:
 	var s := minf(size.x, size.y) / 100.0
 	var o := Vector2(size.x * 0.5, size.y * 0.5)
 	var bob := sin(_t * 3.0) * 1.5 * s
+	if mood == "nod":
+		bob = sin(_mood_t * 14.0) * 5.0 * s * clampf(1.4 - _mood_t, 0.0, 1.0)
+	elif mood == "grin":
+		bob = -absf(sin(_mood_t * 11.0)) * 4.0 * s * clampf(1.4 - _mood_t, 0.0, 1.0)
+	elif mood == "facepalm":
+		bob = 4.0 * s * clampf(_mood_t * 4.0, 0.0, 1.0)
 	var fur := Color(0.62, 0.38, 0.2)
 	var dark := Color(0.42, 0.25, 0.13)
 	# flat tail behind
@@ -118,3 +136,14 @@ func _draw() -> void:
 	draw_line(o + Vector2(-34, -16 + bob / s) * s, o + Vector2(34, -16 + bob / s) * s, Color(0.2, 0.2, 0.25), 5.0)
 	# hard hat
 	_poly(PackedVector2Array([o + Vector2(-26, -26 + bob / s) * s, o + Vector2(-16, -44 + bob / s) * s, o + Vector2(16, -44 + bob / s) * s, o + Vector2(26, -26 + bob / s) * s]), Color(1.0, 0.8, 0.1))
+	# the reactions: a wide grin with shaking teeth, or a paw over the face
+	if mood == "grin":
+		var wob := sin(_mood_t * 40.0) * 1.2 * s
+		draw_arc(o + Vector2(0, 16 + bob / s) * s, 15.0 * s, 0.1, PI - 0.1, 12, Color.BLACK, 4.0)
+		_poly(PackedVector2Array([o + Vector2(-8, 18 + bob / s) * s + Vector2(wob, 0), o + Vector2(8, 18 + bob / s) * s + Vector2(wob, 0), o + Vector2(8, 30 + bob / s) * s + Vector2(wob, 0), o + Vector2(-8, 30 + bob / s) * s + Vector2(wob, 0)]), Color(1, 1, 0.95))
+	elif mood == "facepalm":
+		var up := clampf(_mood_t * 5.0, 0.0, 1.0)
+		var pc := o + Vector2(lerpf(34.0, 4.0, up), lerpf(40.0, -8.0, up) + bob / s) * s
+		_blob(pc, Vector2(17, 20) * s, Color(0.55, 0.33, 0.17), 10)
+		for k in 3:
+			draw_line(pc + Vector2(-8 + k * 8, -10) * s, pc + Vector2(-8 + k * 8, 2) * s, Color.BLACK, 2.5)

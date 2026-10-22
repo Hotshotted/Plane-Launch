@@ -68,6 +68,7 @@ var best_text := ""
 var best_x := 0.0
 var target_x := 0.0     # the daily target flag (0 = none)
 var show_aura := false
+var ambience := false   # the launch screen is alive: Rusty tinkers, a grinder throws sparks, a crow sits on the heap
 var boost_fx := 0.0     # 0..1 while a boost burns: speed lines
 var _chord_mult := 1.0  # wing length factor of the frame being drawn
 var paint_color := Color(0, 0, 0, 0)   # equipped paint (alpha 0 = the frame's own colours)
@@ -209,7 +210,8 @@ func _poly(tpl: PackedVector2Array, o: Vector2, rot: float, sc: Vector2, col: Co
 		l[i] = q
 	l[n] = l[0]
 	draw_colored_polygon(f, col)
-	draw_polyline(l, BLACK, lw)
+	if lw > 0.0:
+		draw_polyline(l, BLACK, lw)
 
 func _poly_sq(tpl: PackedVector2Array, o: Vector2, rot: float, size_m: float, col: Color, lw: float = OUTLINE) -> void:
 	_poly(tpl, o, rot, Vector2(size_m, size_m) * _ppm, col, lw)
@@ -245,6 +247,8 @@ func _draw() -> void:
 	_draw_signs()
 	_draw_target_flag()
 	_draw_ramp()
+	if ambience:
+		_draw_ambience()
 	_draw_things()
 	_draw_glider()
 	_draw_particles()
@@ -958,6 +962,74 @@ func _draw_particles() -> void:
 			_:
 				draw_rect(Rect2(o - Vector2(sz, sz) * 0.5, Vector2(sz, sz)), col)
 				draw_rect(Rect2(o - Vector2(sz, sz) * 0.5, Vector2(sz, sz)), Color(0, 0, 0, col.a), false, 2.0)
+
+# ---------------------------------------------------------------------------------------------
+# The launch screen's ambience (no outlines: only things you can interact with get one)
+# ---------------------------------------------------------------------------------------------
+
+const GRINDER_X := -8.4          # world x of the grinder wheel (sparks fly from here)
+const GRINDER_Y := 1.5
+const HEAP_X := 5.5
+
+## World position the grinder's sparks start from.
+func grinder_pos() -> Vector2:
+	return Vector2(GRINDER_X + 0.5, GRINDER_Y)
+
+func _draw_ambience() -> void:
+	var u := _ppm
+	var gy := _ground_sy
+	var t := _time
+	# the heap of junk on the right, with the crow on top
+	var hx := _sx(HEAP_X)
+	_poly(TRI, Vector2(hx, gy - 1.5 * u), 0.0, Vector2(9.0 * u, 3.2 * u), PILE_DARK, 0.0)
+	_poly(TRI, Vector2(hx + 1.6 * u, gy - 1.0 * u), 0.0, Vector2(6.0 * u, 2.2 * u), PILE, 0.0)
+	draw_rect(Rect2(hx - 2.2 * u, gy - 3.4 * u, 1.3 * u, 1.0 * u), Color(0.55, 0.3, 0.2, 0.9))        # a crate
+	draw_circle(Vector2(hx + 2.6 * u, gy - 2.2 * u), 0.8 * u, Color(0.2, 0.2, 0.22, 0.9))             # a tyre
+	draw_circle(Vector2(hx + 2.6 * u, gy - 2.2 * u), 0.35 * u, Color(0.45, 0.45, 0.5, 0.9))
+	var cx := hx + 0.4 * u
+	var cy := gy - 4.1 * u
+	var peck := maxf(0.0, sin(t * 1.3)) * maxf(0.0, sin(t * 7.0))        # pecks now and then
+	var look := sin(t * 0.5) * 0.25                                      # turns its head
+	var flap := maxf(0.0, sin(t * 0.37 + 1.0) - 0.93) * 14.0             # and every so often flaps
+	var crow := Color(0.13, 0.14, 0.2)
+	draw_circle(Vector2(cx, cy), 0.62 * u, crow)                                    # body
+	_poly(TRI, Vector2(cx - 0.75 * u, cy + 0.2 * u), -1.9, Vector2(0.9 * u, 1.2 * u), crow, 0.0)   # tail
+	var hd := Vector2(cx + (0.55 + look * 0.2) * u, cy - (0.5 - peck * 0.55) * u + sin(flap * 3.0) * 0.1 * u)
+	draw_circle(hd, 0.36 * u, crow)                                                 # head
+	_poly(TRI, hd + Vector2(0.42 * u, 0.0), PI * 0.5 + peck * 0.5, Vector2(0.2 * u, 0.5 * u), Color(0.95, 0.75, 0.2), 0.0)   # beak
+	draw_circle(hd + Vector2(0.1 * u, -0.08 * u), 0.07 * u, Color.WHITE)
+	if flap > 0.0:
+		_poly(TRI, Vector2(cx - 0.1 * u, cy - 0.3 * u), -0.6 - sin(flap * 4.0) * 0.7, Vector2(0.9 * u, 1.5 * u), Color(0.2, 0.22, 0.3), 0.0)
+	draw_line(Vector2(cx - 0.15 * u, cy + 0.55 * u), Vector2(cx - 0.15 * u, cy + 0.9 * u), Color(0.9, 0.7, 0.2), 2.0)
+	draw_line(Vector2(cx + 0.2 * u, cy + 0.55 * u), Vector2(cx + 0.2 * u, cy + 0.9 * u), Color(0.9, 0.7, 0.2), 2.0)
+	# the workbench with the grinder
+	var bx := _sx(GRINDER_X)
+	draw_rect(Rect2(bx - 1.2 * u, gy - 1.2 * u, 3.2 * u, 0.35 * u), Color(0.45, 0.32, 0.2))          # top
+	draw_rect(Rect2(bx - 1.0 * u, gy - 0.85 * u, 0.3 * u, 0.85 * u), Color(0.36, 0.26, 0.17))        # legs
+	draw_rect(Rect2(bx + 1.5 * u, gy - 0.85 * u, 0.3 * u, 0.85 * u), Color(0.36, 0.26, 0.17))
+	var wheel := Vector2(bx + 0.5 * u, gy - (GRINDER_Y * 0.0 + 1.9) * u)
+	draw_rect(Rect2(wheel.x - 0.12 * u, wheel.y, 0.24 * u, 0.7 * u), Color(0.45, 0.47, 0.52))
+	draw_circle(wheel, 0.62 * u, Color(0.62, 0.64, 0.7))
+	draw_circle(wheel, 0.18 * u, Color(0.35, 0.37, 0.42))
+	for k in 3:
+		var a := t * 18.0 + k * TAU / 3.0
+		draw_line(wheel, wheel + Vector2(cos(a), sin(a)) * 0.58 * u, Color(0.8, 0.82, 0.88, 0.6), 2.0)
+	# Rusty, tinkering at the bench: a hammer arm swings, his head bobs
+	var rx := bx - 2.0 * u
+	var swing := sin(t * 6.0)
+	var fur := Color(0.62, 0.38, 0.2)
+	draw_circle(Vector2(rx, gy - 1.3 * u), 0.95 * u, fur)                                          # body
+	draw_circle(Vector2(rx - 0.3 * u, gy - 0.5 * u), 0.5 * u, Color(0.42, 0.25, 0.13))             # tail/foot
+	var rh := Vector2(rx + 0.1 * u, gy - 2.7 * u + swing * 0.06 * u)
+	draw_circle(rh, 0.78 * u, fur)                                                                 # head
+	draw_circle(rh + Vector2(0.45 * u, 0.2 * u), 0.3 * u, Color(0.85, 0.65, 0.45))                 # snout
+	draw_circle(rh + Vector2(0.15 * u, -0.15 * u), 0.2 * u, Color(0.7, 0.85, 0.95))                # goggle
+	draw_circle(rh + Vector2(0.2 * u, -0.15 * u), 0.08 * u, Color.BLACK)
+	draw_rect(Rect2(rh.x - 0.75 * u, rh.y - 0.95 * u, 1.5 * u, 0.5 * u), Color(1.0, 0.8, 0.1))     # hard hat
+	var arm_end := Vector2(rx + 1.4 * u, gy - 1.6 * u - swing * 0.5 * u)
+	draw_line(Vector2(rx + 0.5 * u, gy - 1.6 * u), arm_end, fur, 0.35 * u)
+	draw_line(arm_end, arm_end + Vector2(0.5 * u, -0.5 * u - swing * 0.3 * u), Color(0.4, 0.4, 0.45), 4.0)       # hammer handle
+	draw_rect(Rect2(arm_end.x + 0.3 * u, arm_end.y - 0.95 * u - swing * 0.3 * u, 0.6 * u, 0.4 * u), Color(0.45, 0.47, 0.52))
 
 # ---------------------------------------------------------------------------------------------
 # The glider: every upgrade shows

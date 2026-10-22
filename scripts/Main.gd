@@ -11,6 +11,8 @@ const MAX_TOUCHES := 10
 var flight := Flight.new()
 var world: WorldView
 var hud: Hud
+var sfx: Sfx
+var paused := false             # the pause card is up: the flight is frozen
 var tune_panel: TunePanel
 var rng := RandomNumberGenerator.new()
 
@@ -40,6 +42,7 @@ var _aim_index := -1                 # the finger pulling the slingshot
 var _aim_start := Vector2.ZERO
 
 # frame time
+var _grinder_t := 0.0
 var _skip_frames := 0
 var _suspended := false
 var _warming := false
@@ -54,8 +57,21 @@ func _ready() -> void:
 	world = WorldView.new()
 	world.flight = flight
 	add_child(world)
+	Sfx.setup_buses()
+	sfx = Sfx.new()
+	add_child(sfx)
+	Sfx.set_bus_volume("SFX", Save.sfx_vol)
+	Sfx.set_bus_volume("Music", Save.music_vol)
 	hud = Hud.new()
+	hud.sfx = sfx
+	hud.buzz = _buzz
 	add_child(hud)
+	hud.pause_pressed.connect(set_paused.bind(true))
+	hud.resume_pressed.connect(set_paused.bind(false))
+	hud.restart_pressed.connect(_restart_flight)
+	hud.quit_pressed.connect(_quit_flight)
+	hud.volume_changed.connect(_on_volume)
+	hud.fx_arrived.connect(_on_fx_arrived)
 	hud.launch_pressed.connect(launch)
 	hud.buy_pressed.connect(_on_buy)
 	hud.frame_pressed.connect(_on_frame)
@@ -192,6 +208,8 @@ func _to_shop(snap: bool = true, results: bool = false) -> void:
 	flight.reset(Save.loadout())
 	flight.best_x = Save.best_distance
 	_set_best_text()
+	paused = false
+	world.ambience = true
 	hud.set_mode(Hud.MODE_SHOP)
 	hud.refresh_shop(last_result, bonus_charge > 0)
 	hud.show_results(results and not last_result.is_empty())
@@ -235,6 +253,7 @@ func _start_flight(daily: bool) -> void:
 	for i in MAX_TOUCHES:
 		_touch_hold[i] = 0
 		_touch_boost[i] = 0
+	world.ambience = false
 	hud.set_mode(Hud.MODE_FLIGHT)
 	if daily:
 		hud.set_daily_target(Save.daily_target)
@@ -289,7 +308,45 @@ func _preview_pulse() -> void:
 
 func _on_buy(id: String) -> void:
 	if state == STATE_SHOP and Save.buy(id):
+		var idx := 0
+		for i in Tuning.upgrades.size():
+			if Tuning.upgrades[i]["id"] == id:
+				idx = i
+		# card flash, level pip, scrap flying to the glider; the part bolts on when it lands (_on_fx_arrived)
+		hud.buy_fx(idx, world.to_screen(flight.x, flight.y))
+
+func _on_fx_arrived(tag: String) -> void:
+	if tag == "buy":
+		sfx.play("clank")
 		_preview_pulse()
+
+func set_paused(on: bool) -> void:
+	if on and (state != STATE_FLIGHT or flight.phase == Flight.PH_DONE):
+		return
+	paused = on
+	hud.show_pause(on)
+	clear_input()
+	if not on:
+		_skip_frames = Tuning.resume_skip_frames
+
+func _restart_flight() -> void:
+	set_paused(false)
+	var daily := daily_mode
+	_to_shop(true, false)
+	_start_flight(daily)
+
+func _quit_flight() -> void:
+	set_paused(false)
+	_to_shop(true, false)
+
+func _on_volume(bus: String, v: float) -> void:
+	if bus == "SFX":
+		Save.sfx_vol = v
+	else:
+		Save.music_vol = v
+	Sfx.set_bus_volume(bus, v)
+	Save.save_game()
+	sfx.play("toggle")
 
 ## A frames row was pressed: equip it if owned, buy it (and equip) if not.
 func _on_frame(id: String) -> void:
@@ -385,7 +442,7 @@ func _input(event: InputEvent) -> void:
 				if flight.phase == Flight.PH_AIM and not flight.fire():
 					flight.set_aim(0.0, flight.aim_angle)   # too weak a pull: try again
 			return
-		if state != STATE_FLIGHT or TunePanel.button_hit(event.position):
+		if state != STATE_FLIGHT or paused or TunePanel.button_hit(event.position) or hud.pause_rect().has_point(event.position):
 			return
 		if flight.phase == Flight.PH_AIM:
 			_aim_index = i
@@ -463,6 +520,8 @@ func _notification(what: int) -> void:
 			if not _suspended:
 				_suspended = true
 				_note_event("window went to the background")
+				if state == STATE_FLIGHT and not paused:
+					set_paused(true)     # auto-pause on focus loss
 		NOTIFICATION_APPLICATION_FOCUS_IN, NOTIFICATION_APPLICATION_RESUMED, NOTIFICATION_WM_WINDOW_FOCUS_IN:
 			if _suspended:
 				_suspended = false
@@ -479,6 +538,8 @@ func _process(raw_delta: float) -> void:
 ## One frame of the game with `delta` seconds of simulation (0 = nothing moves, e.g. a skipped frame).
 ## Public so tests can step the game with fixed time.
 func frame(delta: float, raw_delta: float = 0.0) -> void:
+	if paused:
+		delta = 0.0
 	if delta > 0.0:
 		world.update_particles(delta)   # (also on the launch screen: the glider keeps its little idle animations)
 	if state == STATE_FLIGHT and delta > 0.0:
@@ -508,6 +569,13 @@ func frame(delta: float, raw_delta: float = 0.0) -> void:
 		if flight.phase == Flight.PH_AIR and flight.time_in_air > 4.0:
 			hud.show_hint(false)
 	_time += delta
+	if state == STATE_SHOP and world.ambience and delta > 0.0:
+		_grinder_t -= delta
+		if _grinder_t <= 0.0:
+			_grinder_t = 0.07 + rng.randf() * 0.1
+			var gp := world.grinder_pos()
+			for k in 2:
+				world.spawn(WorldView.P_SPARK, gp.x, gp.y, 2.5 + rng.randf() * 3.0, 1.0 + rng.randf() * 3.5, 0.45, 0.14, Color(1.0, 0.75 + rng.randf() * 0.2, 0.3))
 	_kick = maxf(_kick - delta * Tuning.boost_kick_decay, 0.0)
 	world.boost_fx = clampf(flight.boost_left / maxf(Tuning.booster_time, 0.01), 0.0, 1.0) if state == STATE_FLIGHT else 0.0
 	_update_camera(maxf(raw_delta, delta))

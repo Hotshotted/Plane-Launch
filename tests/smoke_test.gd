@@ -130,6 +130,7 @@ func fly_main(main: Node, max_seconds: float = 120.0) -> float:
 func _initialize() -> void:
 	var HudIntro: GDScript = load("res://scripts/Hud.gd")
 	HudIntro.intro_enabled = false
+	HudIntro.animate = false     # transitions complete instantly (a section below turns them on)
 	tn = root.get_node("Tuning")
 	sv = root.get_node("Save")
 	FlightS = load("res://scripts/Flight.gd")
@@ -1232,6 +1233,134 @@ func _initialize() -> void:
 		main.hud._process(0.016)
 	check(not main.hud.intro_active and not main.hud._intro.visible, "a tap skips the intro, and it ends by itself")
 	HudS.intro_enabled = false
+
+	print("5c. motion and screens (transitions on)")
+	HudS.animate = true
+	main.hud.settle()
+	main._to_shop()
+	main.hud.settle()
+	var hm: Node = main.hud
+	# a sheet rises in and sinks out
+	hm.show_tab(1)
+	hm._process(0.05)
+	check(hm._sheet.visible and hm._sheet.modulate.a < 1.0 and hm._sheet.scale.x < 1.0, "the garage sheet rises in (alpha %.2f, scale %.2f)" % [hm._sheet.modulate.a, hm._sheet.scale.x])
+	for k in 40:
+		hm._process(0.02)
+	check(hm._sheet.visible and is_equal_approx(hm._sheet.modulate.a, 1.0) and is_equal_approx(hm._sheet.scale.x, 1.0), "the sheet settles at full size")
+	hm.close_sheet()
+	hm._process(0.03)
+	check(hm._sheet.visible, "closing is a short animation, not a cut")
+	for k in 30:
+		hm._process(0.02)
+	check(not hm._sheet.visible, "and then the sheet is gone")
+	# buttons squash on press, bounce back on release, with sound
+	var press_before5c := int(main.sfx.plays["press"])
+	var tap_before5c := int(main.sfx.plays["tap"])
+	hm._nav_buttons[2].button_down.emit()
+	hm._process(0.12)
+	check(hm._nav_buttons[2].scale.x < 0.96, "a pressed button squashes (%.3f)" % hm._nav_buttons[2].scale.x)
+	hm._nav_buttons[2].button_up.emit()
+	hm._nav_buttons[2].pressed.emit()
+	for k in 40:
+		hm._process(0.02)
+	check(is_equal_approx(hm._nav_buttons[2].scale.x, 1.0) and int(main.sfx.plays["press"]) == press_before5c + 1 and int(main.sfx.plays["tap"]) == tap_before5c + 1, "released: back to size, with the press and tap sounds")
+	hm.close_sheet()
+	for k in 30:
+		hm._process(0.02)
+	# the buy sequence: card flash, pip pop, scrap flies to the glider, then the part bolts on with a clank
+	sv.add_scrap(2000.0)
+	main.world.pulse = 0.0
+	var clanks5c := int(main.sfx.plays["clank"])
+	var lvb5c: int = sv.level("wings")
+	hm._row_btn[1].pressed.emit()
+	check(sv.level("wings") == lvb5c + 1 and hm._card_flash[1] > 0.9 and hm._card_pips[1].pop > 0.9, "buying: the card flashes and the new level pip pops")
+	var flying := 0
+	for n in hm._fly_nodes:
+		if n.visible:
+			flying += 1
+	check(flying >= 3 and main.world.pulse == 0.0, "scrap flies off the counter first (%d coins), the glider has not changed yet" % flying)
+	for k in 60:
+		hm._process(0.02)
+	check(main.world.pulse > 0.0 and int(main.sfx.plays["clank"]) == clanks5c + 1, "when the scrap lands the part bolts on: pulse and a clank")
+	# results: the distance counts up, a new best stamps in, scrap flies to the counter
+	main.last_result = {"distance": 321.0, "earned": 90, "dist_scrap": 40, "picked": 50, "picked_count": 5, "new_best": true, "zone_bonus": 0, "zone": 2,
+			"new_zones": 0, "mission_bonus": 0, "missions": [], "new_missions": [], "rusty": "Hi.", "daily": {}, "doubled": false}
+	hm.refresh_shop(main.last_result)
+	hm.show_results(true)
+	hm._process(0.5)
+	check(hm._res_dist.text != "321 m" and hm._res_badge.modulate.a < 1.0, "results: the distance is still counting (%s) and NEW BEST has not landed" % hm._res_dist.text)
+	for k in 90:
+		hm._process(0.02)
+	check(hm._res_dist.text == "321 m" and hm._res_badge.modulate.a > 0.9 and int(main.sfx.plays["best"]) >= 1 and int(main.sfx.plays["tick"]) > 3, "results: counted up to 321 m, NEW BEST stamped in with its fanfare")
+	for k in 120:
+		hm._process(0.02)
+	check(hm._shop_scrap.text == "SCRAP  %s" % tn.fmt(sv.scrap), "results: the scrap reached the counter")
+	hm.show_results(false)
+	for k in 30:
+		hm._process(0.02)
+	# a zone postcard sweeps across
+	hm.set_mode(0)
+	hm.settle()
+	hm.set_mode(1)
+	hm.banner("NEW ZONE!\nRIVER\n+120 scrap", HudS.C_ACCENT)
+	hm._process(0.1)
+	check(hm._banner.visible and hm._banner.offset_left < -460.0, "zone postcard: sweeping in from the left")
+	for k in 40:
+		hm._process(0.02)
+	check(is_equal_approx(hm._banner.offset_left, -460.0), "zone postcard: rests in the middle")
+	for k in 100:
+		hm._process(0.02)
+	check(not hm._banner.visible, "zone postcard: swept out and gone")
+	hm.set_mode(0)
+	hm.settle()
+	# Rusty reacts
+	hm._rusty.react("grin")
+	check(hm._rusty.mood == "grin", "Rusty's portrait reacts")
+	# the launch screen is alive
+	check(main.world.ambience, "the launch screen has its ambience on")
+	main.world.clear_particles()
+	for k in 30:
+		main.frame(0.05, 0.05)
+	check(main.world.live_particles() > 0, "the grinder throws sparks (%d live)" % main.world.live_particles())
+	# pause: the button, the card, freezing the flight, restart, quit, volume, focus loss
+	main._to_shop()
+	hm.settle()
+	main.launch()
+	for k in 5:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+	check(hm.pause_rect().size.x > 50.0, "flight: a pause button is in the top corner")
+	touch(main, hm.pause_rect().get_center(), true)
+	check(not main.is_holding(), "touching the pause button does not steer")
+	touch(main, hm.pause_rect().get_center(), false)
+	hm._pause_btn.pressed.emit()
+	check(main.paused and hm.pause_active and hm._pause.visible, "the pause card opens")
+	var px05c: float = main.flight.x
+	for k in 20:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+	check(main.flight.x == px05c, "paused: nothing moves")
+	main._on_volume("SFX", 0.4)
+	main._on_volume("Music", 0.0)
+	check(is_equal_approx(sv.sfx_vol, 0.4) and sv.music_vol == 0.0 and is_equal_approx(AudioServer.get_bus_volume_db(AudioServer.get_bus_index("SFX")), linear_to_db(0.4)), "the sliders set the SFX and music volumes (and save them)")
+	hm.resume_pressed.emit()
+	check(not main.paused and not hm.pause_active, "Resume closes the card")
+	for k in 40:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+	check(main.flight.x > px05c, "and the flight carries on")
+	main._notification(NOTIFICATION_APPLICATION_FOCUS_OUT)
+	check(main.paused, "losing focus pauses the flight by itself")
+	main._notification(NOTIFICATION_APPLICATION_FOCUS_IN)
+	var rc5c: int = main.restart_count
+	hm.restart_pressed.emit()
+	check(main.state == main.STATE_FLIGHT and not main.paused and main.restart_count == rc5c + 1 and main.flight.x < px05c + 5.0, "Restart starts a fresh flight")
+	main.set_paused(true)
+	hm.quit_pressed.emit()
+	check(main.state == main.STATE_SHOP and not main.paused and not hm.pause_active, "Quit goes back to the launch screen")
+	sv.sfx_vol = 1.0
+	sv.music_vol = 1.0
+	main._on_volume("SFX", 1.0)
+	main._on_volume("Music", 1.0)
+	HudS.animate = false
+	hm.settle()
 
 	print("6. save file")
 	sv.reset_all()
