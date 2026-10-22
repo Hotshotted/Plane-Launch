@@ -157,6 +157,10 @@ var skips := 0
 var band := 0                   # the band the glider is in (0 low, 1 mid, 2 high, 3 very high)
 var band_time := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])    # seconds spent in each band this flight
 var band_hits := PackedInt32Array([0, 0, 0, 0])              # interactions in each band this flight
+var spawned := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # things generated this flight, by kind (the sim compares them with what was reached)
+var chain := 0                  # prizes taken in a row (each within a few seconds of the last): every link pays 25% more
+var best_chain := 0
+var _chain_t := 0.0
 var interactions := 0           # everything the glider reacted to this flight (scrap, pads, fans, air objects, finds...)
 var dist_acc := 0.0             # distance pay so far, with the height multiplier
 var bonus_scrap := 0.0          # scrap earned beyond what x1 would have paid (the height bonus)
@@ -262,6 +266,10 @@ func reset(levels: Dictionary, seed_value: int = -1) -> void:
 	band_time.fill(0.0)
 	band_hits.fill(0)
 	interactions = 0
+	chain = 0
+	best_chain = 0
+	_chain_t = 0.0
+	spawned.fill(0)
 	dist_acc = 0.0
 	bonus_scrap = 0.0
 	balloon_hits = 0
@@ -451,6 +459,10 @@ func _step_ramp(dt: float) -> void:
 
 func _step_air(dt: float, hold: bool) -> void:
 	clock += dt
+	if _chain_t > 0.0:
+		_chain_t -= dt
+		if _chain_t <= 0.0:
+			chain = 0
 	time_in_air += dt
 	# --- pitch control ---
 	var rate := deg_to_rad(Tuning.pitch_rate)
@@ -526,6 +538,9 @@ func _step_air(dt: float, hold: bool) -> void:
 	_was_in_fan = in_fan
 	if in_stream:
 		stream_time += dt
+		var spay := _pay(Tuning.stream_scrap * dt * Tuning.band_mult(band))
+		picked_value += spay
+		bonus_scrap += Tuning.stream_scrap * dt * (Tuning.band_mult(band) - 1.0)
 		if not _was_in_stream:
 			stream_entries += 1
 			interactions += 1
@@ -657,14 +672,17 @@ func _touch_things(dt: float) -> void:
 				var br := Tuning.balloon_r * t_scale[i]
 				var top := t_y[i] + br
 				var bel := y - BELLY
-				if vy < 0.0 and absf(x - t_x[i]) < br * 0.85 and bel <= top + 0.5 and bel >= top - 1.4:
+				if vy < 0.0 and absf(x - t_x[i]) < br * 1.0 and bel <= top + 0.9 and bel >= top - 2.4:
 					vy = maxf(-vy * Tuning.balloon_restitution, Tuning.balloon_kick) * tr_bounce
 					y = top + 0.5 + BELLY
 					t_phase[i] = 0.45
 					balloon_hits += 1
 					interactions += 1
 					band_hits[band] += 1
-					push_event(EV_BALLOON, t_x[i], top, roundi(vy), t_skin[i])
+					var bpay := _pay(Tuning.balloon_scrap * Tuning.band_mult(band) * _chain_up())
+					picked_value += bpay
+					bonus_scrap += Tuning.balloon_scrap * (Tuning.band_mult(band) - 1.0)
+					push_event(EV_BALLOON, t_x[i], top, roundi(vy), bpay)
 			K_KITE, K_GOOSE:
 				t_x[i] = tx + t_vx[i] * dt
 				t_y[i] = t_y0[i] + sin(clock * (2.1 if kind == K_KITE else 1.7) + t_phase[i]) * (0.9 if kind == K_KITE else 0.5)
@@ -697,7 +715,7 @@ func _touch_things(dt: float) -> void:
 						rings_hit += 1
 						interactions += 1
 						band_hits[band] += 1
-						var rv := _pay(Tuning.ring_scrap * Tuning.band_mult(band))
+						var rv := _pay(Tuning.ring_scrap * Tuning.band_mult(band) * _chain_up())
 						picked_value += rv
 						bonus_scrap += Tuning.ring_scrap * (Tuning.band_mult(band) - 1.0)
 						push_event(EV_RING, tx, t_y[i], roundi(Tuning.ring_boost), rv)
@@ -710,7 +728,7 @@ func _touch_things(dt: float) -> void:
 				var bh := Tuning.blimp_height * t_scale[i] * 0.5
 				var btop := t_y[i] + bh
 				var bel2 := y - BELLY
-				if t_phase[i] <= 0.0 and absf(x - t_x[i]) < Tuning.blimp_len * t_scale[i] * 0.5 * 0.9 and bel2 <= btop + 0.6 and bel2 >= btop - 1.2 and vy <= 1.0:
+				if t_phase[i] <= 0.0 and absf(x - t_x[i]) < Tuning.blimp_len * t_scale[i] * 0.5 * 0.9 and bel2 <= btop + 0.9 and bel2 >= btop - 2.0 and vy <= 1.5:
 					var sp_b := maxf(speed(), 1.0)
 					vx += vx / sp_b * Tuning.blimp_boost
 					vy = maxf(-vy * 0.4, Tuning.blimp_kick)
@@ -719,14 +737,17 @@ func _touch_things(dt: float) -> void:
 					blimp_hits += 1
 					interactions += 1
 					band_hits[band] += 1
-					push_event(EV_BLIMP, t_x[i], btop, roundi(Tuning.blimp_boost))
+					var lpay := _pay(Tuning.blimp_scrap * Tuning.band_mult(band) * _chain_up())
+					picked_value += lpay
+					bonus_scrap += Tuning.blimp_scrap * (Tuning.band_mult(band) - 1.0)
+					push_event(EV_BLIMP, t_x[i], btop, roundi(Tuning.blimp_boost), lpay)
 			K_FIND:
 				var fdx := x - tx
 				var fdy := y - t_y[i]
 				if fdx * fdx + fdy * fdy < Tuning.find_radius * Tuning.find_radius:
 					t_active[i] = 0
 					thing_count -= 1
-					var fv := _pay(t_aux[i] * Tuning.band_mult(band))
+					var fv := _pay(t_aux[i] * Tuning.band_mult(band) * _chain_up())
 					picked_value += fv
 					bonus_scrap += t_aux[i] * (Tuning.band_mult(band) - 1.0)
 					finds += 1
@@ -807,6 +828,13 @@ func altitude() -> float:
 func scrap_for_distance() -> int:
 	return int(floorf(dist_acc))
 
+## A prize was taken: extend the chain and return what this one is worth times (x1, x1.25, x1.5 ... for a long chain).
+func _chain_up() -> float:
+	chain = mini(chain + 1, 7)
+	best_chain = maxi(best_chain, chain)
+	_chain_t = Tuning.chain_window
+	return 1.0 + Tuning.chain_bonus * float(chain - 1)
+
 ## Whole scrap out of a fractional amount: the remainder is carried to the next pickup.
 func _pay(amount: float) -> int:
 	_carry += amount
@@ -868,7 +896,13 @@ func add_thing(kind: int, tx: float, ty: float, tvx: float = 0.0, skin: int = -1
 						sk = 0
 			t_skin[i] = sk
 			thing_count += 1
+			spawned[kind] += 1
 			return
+
+## A vertical offset of a prize from the glider's expected path: always off to one side by `lo`..`hi` metres, so gliding along
+## gets you few of them and you have to steer (and climb) for the rest.
+func _spread(lo: float, hi: float) -> float:
+	return rng.randf_range(lo, hi) * (1.0 if rng.randf() < 0.55 else -1.0)
 
 ## Where the glider will be in a moment: the height the generator aims its content at.
 func _expected_alt() -> float:
@@ -928,6 +962,8 @@ func _gen_chunk() -> void:
 	var e1 := Tuning.band_edge_1
 	var e2 := Tuning.band_edge_2
 	var e3 := Tuning.band_edge_3
+	# A small launch cannot get up to the high air: its rings, streams and blimps hang in the mid air it can actually reach.
+	var hi := e2 if (reach_alt >= e2 + 4.0 or Tuning.low_rings < 0.5) else maxf(e1 + 5.0, reach_alt * 0.75)
 	match which:
 		0:   # an arc of nuts near where the glider is (never right on the ground: low air has less scrap)
 			var apex := clampf(cur_alt + rng.randf_range(-6.0, 8.0), 8.0, 90.0)
@@ -966,7 +1002,7 @@ func _gen_chunk() -> void:
 			for i in 6:
 				add_thing(K_NUT, cx + 3.0 + i * 2.0, 1.6)
 		7:   # a balloon (or a parasailer): clip its top to bounce up, nuts arcing up from it toward the high air
-			var by := clampf(cur_alt + rng.randf_range(-2.0, 5.0), e1 + 3.0, e2 - 3.0)
+			var by := clampf(cur_alt + _spread(2.5, 8.0), e1 + 3.0, e2 - 3.0)
 			var bx := cx + rng.randf_range(7.0, 11.0)
 			var sz := rng.randf_range(0.9, 1.2)
 			add_thing(K_BALLOON, bx, by, -Tuning.bird_drift * 0.25, -1, 0.0, sz)
@@ -1008,20 +1044,20 @@ func _gen_chunk() -> void:
 				else:
 					add_thing(K_BALLOON, cx + 38.0, y1 - Tuning.balloon_r, -Tuning.bird_drift * 0.25)
 		11:  # boost rings in a gentle curve, a nut or two between them
-			var ry := clampf(maxf(e2 + 2.0, cur_alt + rng.randf_range(-3.0, 6.0)), e2 + 2.0, 92.0)
+			var ry := clampf(cur_alt + _spread(4.5, 11.0), hi + 2.0, 92.0)
 			var n := 1 + (1 if rng.randf() < 0.5 else 0) + (1 if rng.randf() < 0.25 else 0)
 			for i in n:
-				var rry := clampf(ry + (i * 2.5 if rng.randf() < 0.5 else -i * 2.5), e2 + 1.0, 94.0)
+				var rry := clampf(ry + (i * 2.5 if rng.randf() < 0.5 else -i * 2.5), hi + 1.0, 94.0)
 				add_thing(K_RING, cx + 9.0 + i * 13.0, rry)
 				add_thing(K_NUT, cx + 15.5 + i * 13.0, (rry + ry) * 0.5)
 		12:  # a tailwind stream with nuts riding along it
-			var sy := clampf(maxf(e2 + 3.0, cur_alt + rng.randf_range(-3.0, 5.0)), e2 + 3.0, 92.0)
+			var sy := clampf(cur_alt + _spread(4.0, 10.0), hi + 3.0, 92.0)
 			var sl := Tuning.stream_len * rng.randf_range(0.85, 1.15)
 			add_thing(K_STREAM, cx + 4.0, sy, 0.0, 0, sl)
 			for i in 6:
 				add_thing(K_NUT, cx + 8.0 + i * (sl - 8.0) / 5.0, sy + sin(i * 1.3) * 1.2)
 		13:  # a blimp: skim across the top, nuts above it to show the line
-			var ly := clampf(maxf(e2 + 3.0, cur_alt + rng.randf_range(-2.0, 6.0)), e2 + 3.0, 92.0)
+			var ly := clampf(cur_alt + _spread(4.0, 10.0), hi + 3.0, 92.0)
 			var lx := cx + rng.randf_range(9.0, 13.0)
 			var sz := rng.randf_range(0.95, 1.2)
 			add_thing(K_BLIMP, lx, ly, -Tuning.bird_drift * 0.2, int(rng.randf() * 3.0), 0.0, sz)
@@ -1036,7 +1072,7 @@ func _gen_chunk() -> void:
 				add_thing(K_NUT, qx - 4.5 + i * 3.0, qy)
 		15:  # a joke find up in the sky: a lost satellite, an astronaut cat, a space duck, a cosmic cow
 			var fk := rng.randi() % 4
-			var fy2 := clampf(maxf(e3 + 4.0, cur_alt + rng.randf_range(-3.0, 6.0)), e3 + 4.0, 100.0)
+			var fy2 := clampf(cur_alt + _spread(4.0, 12.0), e3 + 4.0, 100.0)
 			add_thing(K_FIND, cx + 10.0, fy2, 0.0, fk, float(Tuning.find_value[fk]))
 			for i in 3:
 				add_thing(K_NUT, cx + 3.0 + i * 2.5, fy2 - 3.0 + i * 1.0)
@@ -1061,6 +1097,8 @@ func _gen_chunk() -> void:
 var _ap_hold := false
 var _ap_timer := 0.0
 var _ap_boost_timer := 0.0
+var _seek_dy := 0.0          # the seeking pilot's best prize: how far above (+) or below it is, and how much it is worth
+var _seek_value := 0.0
 
 ## The seeking pilot (the balance sim's "player who goes for things"): how much to tilt the glide up (+) or down (-) to aim at
 ## the best prize ahead (a ring, a find, a balloon or blimp top, a stream, scrap) while steering clear of storms and anything that slows you.
@@ -1079,17 +1117,19 @@ func _seek_offset() -> float:
 		var kind := t_kind[i]
 		match kind:
 			K_RING:
-				value = 4.0 if t_aux[i] == 0.0 else 0.0
+				value = 6.0 if t_aux[i] == 0.0 else 0.0
 			K_FIND:
 				value = 7.0
 			K_BALLOON:
-				value = 2.5
-				ty += Tuning.balloon_r * t_scale[i] + 1.4
+				value = 3.5
+				var btop := ty + Tuning.balloon_r * t_scale[i]
+				ty = btop + 0.3 if y - BELLY > btop - 0.5 else btop + 2.8       # drop onto the top, or climb over it first
 			K_BLIMP:
-				value = 2.0
-				ty += Tuning.blimp_height * t_scale[i] * 0.5 + 1.4
+				value = 4.0
+				var ltop := ty + Tuning.blimp_height * t_scale[i] * 0.5
+				ty = ltop + 0.3 if y - BELLY > ltop - 0.5 else ltop + 2.8
 			K_STREAM:
-				value = 2.5
+				value = 3.5
 			K_GEAR:
 				value = 3.0
 			K_NUT:
@@ -1116,9 +1156,11 @@ func _seek_offset() -> float:
 			best_score = score
 			best_dy = dy
 			best_dx = dx
+	_seek_dy = best_dy
+	_seek_value = best_score
 	if best_score <= 0.0:
 		return 0.0
-	return clampf(best_dy / maxf(best_dx, 8.0) * 1.6, -0.14, 0.22)
+	return clampf(best_dy / maxf(best_dx, 8.0) * 2.2, -0.2, 0.28)
 
 ## Best-glide speed for the current wings and body: the speed the pilot tries to keep.
 func best_glide_speed() -> float:
@@ -1146,6 +1188,9 @@ func pilot(delta: float, skill: float = 1.0, seek: bool = false) -> bool:
 			_ap_hold = alpha < limit * 0.8   # flare near the ground
 		else:
 			_ap_hold = alpha < minf(alpha_bg + off, limit * 0.75)
+	if seek and phase == PH_AIR and charges > 0 and _ap_boost_timer <= 0.0 and boost_left <= 0.0 and _seek_dy > 5.0 and _seek_value >= 1.2 and speed() > best_glide_speed() * 0.9:
+		if boost():     # an active pilot spends a booster charge to climb to a prize that is worth it
+			_ap_boost_timer = 1.0
 	if phase == PH_AIR and charges > 0 and _ap_boost_timer <= 0.0 and altitude() < 14.0 and vy < -1.0 and theta > deg_to_rad(-12.0):
 		if boost():
 			_ap_boost_timer = 1.2

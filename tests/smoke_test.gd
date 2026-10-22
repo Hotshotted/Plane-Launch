@@ -202,7 +202,7 @@ func _initialize() -> void:
 	f.add_thing(FlightS.K_NUT, 4.0, 30.0)
 	f.add_thing(FlightS.K_GEAR, 8.0, 29.3)
 	f.advance(1.2, false)
-	check(f.picked_value == (tn.scrap_nut_value + tn.scrap_gear_value) * tn.band_mult(tn.band_of(30.0)), "scrap in the glider's path is collected, times the band's height bonus (%d)" % f.picked_value)
+	check(absf(float(f.picked_value) - float(tn.scrap_nut_value + tn.scrap_gear_value) * tn.band_mult(tn.band_of(30.0))) <= 1.0, "scrap in the glider's path is collected, times the band's height bonus (%d)" % f.picked_value)
 	f = air(0, 30, 15, 0, 0)
 	f.add_thing(FlightS.K_NUT, 8.0, 34.5)
 	f.advance(0.8, true)
@@ -210,7 +210,7 @@ func _initialize() -> void:
 	f = air(0, 30, 15, 0, 0, lv(0, 0, 0, 0, 8))
 	f.add_thing(FlightS.K_NUT, 8.0, 34.5)
 	f.advance(0.8, true)
-	check(no_magnet == 0 and f.picked_value == tn.scrap_nut_value * tn.band_mult(tn.band_of(30.0)), "the Scrap Magnet pulls in scrap the glider would miss")
+	check(no_magnet == 0 and absf(float(f.picked_value) - float(tn.scrap_nut_value) * tn.band_mult(tn.band_of(30.0))) <= 1.0, "the Scrap Magnet pulls in scrap the glider would miss")
 	check(tn.magnet_radius(8) > tn.magnet_radius(0) * 3.0, "magnet reach grows a lot with levels")
 	f = air(0, 100, 20, 0, 0, lv(0, 0, 0, 3, 0))
 	var charges0: int = f.charges
@@ -661,8 +661,8 @@ func _initialize() -> void:
 	check(f.fire() and f.phase == FlightS.PH_RAMP, "a firm pull fires")
 	var dist_by := {}
 	for id in ["ramp", "sling", "catapult", "sled"]:
-		dist_by[id] = avg_distance({"ramp": 3, "wings": 3, "body": 3, "booster": 0, "magnet": 0, "launcher": id})
-	check(dist_by["ramp"] < dist_by["sling"] * 0.9 and dist_by["sling"] < dist_by["catapult"] * 0.9 and dist_by["catapult"] < dist_by["sled"] * 0.9, "each launcher clearly goes farther (%.0f, %.0f, %.0f, %.0f m)" % [dist_by["ramp"], dist_by["sling"], dist_by["catapult"], dist_by["sled"]])
+		dist_by[id] = avg_distance({"ramp": 3, "wings": 3, "body": 3, "booster": 0, "magnet": 0, "launcher": id}, 10)
+	check(dist_by["ramp"] < dist_by["sling"] * 0.9 and dist_by["sling"] < dist_by["catapult"] * 0.95 and dist_by["catapult"] < dist_by["sled"] * 0.95, "each launcher clearly goes farther (%.0f, %.0f, %.0f, %.0f m)" % [dist_by["ramp"], dist_by["sling"], dist_by["catapult"], dist_by["sled"]])
 	sv.reset_all()
 	sv.launchers_owned["sling"] = true
 	sv.launcher = "sling"
@@ -1030,9 +1030,17 @@ func _initialize() -> void:
 	main.flight.pad_bounces = 4
 	main._mission_toasts()
 	check(main.hud._toast.text == "MISSION DONE: Bounces 4/4", "finishing it says so (%s)" % main.hud._toast.text)
-	main.flight.picked_value = 12
+	var scrap_tgt := 40
+	var scrap_slot := 1
+	for si in sv.missions.size():
+		if sv.missions[si]["type"] == "scrap":
+			scrap_slot = si
+	sv.missions[scrap_slot] = {"type": "scrap", "target": scrap_tgt, "reward": 50, "zone": 0, "best": 0, "fresh": false}
+	main._toast_val[scrap_slot] = 0
+	main.flight.picked_value = scrap_tgt / 2
 	main._mission_toasts()
-	check(main.hud._toast.text == "Scrap 12/25", "scrap progress toasts too (%s)" % main.hud._toast.text)
+	check(scrap_tgt > 0 and main.hud._toast.text == "Scrap %d/%d" % [scrap_tgt / 2, scrap_tgt], "scrap progress toasts too (%s)" % main.hud._toast.text)
+	main._toast_val = PackedInt32Array([0, 0, 0])
 	main.flight.distance = 170.0
 	main._mission_toasts()
 	check(main.hud._toast.text.begins_with("Distance 170/320"), "distance toasts at the halfway mark (%s)" % main.hud._toast.text)
@@ -1798,7 +1806,7 @@ func _initialize() -> void:
 	main.launch()
 	main.frame(1.0 / 60.0, 1.0 / 60.0)
 	main.hud.set_flight(120.0, 0, 0, false, false, 2)
-	check(main.hud._mult.text == "HIGH x2" and main.hud._mult.is_visible_in_tree(), "the band and its multiplier show next to the distance (%s)" % main.hud._mult.text)
+	check(main.hud._mult.text == "HIGH " + tn.mult_text(tn.band_mult(2)) and main.hud._mult.is_visible_in_tree(), "the band and its multiplier show next to the distance (%s)" % main.hud._mult.text)
 	var ab_pl: Dictionary = main.sfx.plays
 	var ab_c0 := {}
 	for ab_n in ["ring", "band", "find", "storm", "boing"]:

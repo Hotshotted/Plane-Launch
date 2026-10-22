@@ -132,7 +132,7 @@ arrivals, ease-in-cubic for exits, ease-out-back for things that land. Anything 
 
 ## The air: altitude bands
 
-Where you fly is a decision. Height above the ground splits the sky into four bands (`Tuning.band_edge_*`: 10, 24, 48 m) and each has its own content and its own scrap multiplier (the chip next to the distance: LOW x1, MID x1.5, HIGH x2, SKY x2.5). The multiplier applies to everything earned as it is earned: distance pay while flying, and every pickup.
+Where you fly is a decision. Height above the ground splits the sky into four bands (`Tuning.band_edge_*`: 10, 24, 48 m) and each has its own content and its own scrap multiplier (the chip next to the distance: LOW x1, MID x1.5, HIGH x1.8, SKY x2). The multiplier applies to everything earned as it is earned: distance pay while flying, and every pickup.
 
 | Band | Content | Notes |
 |---|---|---|
@@ -142,6 +142,7 @@ Where you fly is a decision. Height above the ground splits the sky into four ba
 | Sky (48 m+) | joke finds that pay big: lost satellite, astronaut cat, space duck, cosmic cow | rare, only for big launches (`Flight.reach_alt`) |
 
 * **Weaving:** scrap arcs lead up (or down) from one band into the next and end at its first prize (a ring or a balloon); the generator aims content at where the glider will be about a second from now, so there is always something in reach, and a slow glider gets shorter chunks. The sim measures it (`glide_sim.gd -- bands`): the sky is never empty for more than about two seconds.
+* **Active flying pays:** the prizes (rings, balloons, blimps, finds) pay well, scale with the band, and chain: grabbing another prize within a few seconds raises the next payout by `Tuning.chain_bonus` per link (up to 7), and the chain toast says so. Distance pay stays modest (`scrap_per_meter`). `glide_sim.gd -- pay` flies a passive and a seeking pilot at the same upgrade level over 60 seeds: the seeker earns about +42% at level 1, +53% at level 3, +72% at level 6 and +93% at level 10. Costs are tuned (`cost_mult`, `cost_growth_add`) so the upgrade ladder takes about the same number of runs as before (`-- ladder`: 43 to max out).
 * **Zones** have their own air (`Zones.air`): Coast has parasailers and seagulls, City helicopters and drones, Farmland geese, Hills big weather, Dino Valley pterodactyls and ash clouds, the Moon and Disco Planet UFOs and neon storms.
 * **Missions** use it: fly through rings, bounce off balloons, skim blimps, ride tailwinds, spend time in high air, find a treasure.
 * **Art:** the same storybook shapes with a black outline on everything you can touch; streams are soft ribbons without one. Everything is pooled (`Flight.MAX_THINGS`, fixed arrays) and every skin is drawn in the start-up pre-warm.

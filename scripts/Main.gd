@@ -48,6 +48,7 @@ var _aim_start := Vector2.ZERO
 # frame time
 var _grinder_t := 0.0
 var _prev_phase := -1
+var _chain_shown := 0
 var _scrap_sum := 0             # nut scrap waiting for its one popup
 var _scrap_mult := 10
 var _scrap_pos := Vector2.ZERO
@@ -858,18 +859,18 @@ func _handle_events() -> void:
 			Flight.EV_BALLOON:
 				world.burst(WorldView.P_FEATHER, ex, ey, 7, 6.0, 0.7, 0.45, Color(1.0, 0.85, 0.7), rng)
 				sfx.play("boing")
-				hud.popup("BALLOON! bounce on its top" if Save.mark_seen("balloon") else "BALLOON! +%d m/s up" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_ACCENT, "balloon")
+				hud.popup("BALLOON! bounce on its top" if Save.mark_seen("balloon") else "BALLOON! +%d" % flight.ev_aux[k], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_ACCENT, "balloon")
 				_buzz(25)
 			Flight.EV_RING:
 				world.burst(WorldView.P_SPARK, ex, ey, 14, 9.0, 0.7, 0.4, Color(1.0, 0.8, 0.3), rng)
 				sfx.play("ring")
 				_kick = maxf(_kick, 0.6)
-				hud.popup("RING! fly through for speed" if Save.mark_seen("ring") else "RING! +%d m/s" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_ACCENT, "ring")
+				hud.popup("RING! fly through for speed" if Save.mark_seen("ring") else "RING! +%d" % flight.ev_aux[k], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_ACCENT, "ring")
 				_buzz(30)
 			Flight.EV_BLIMP:
 				world.burst(WorldView.P_DUST, ex, ey, 6, 5.0, 0.5, 0.5, Color(1, 1, 1), rng)
 				sfx.play("boost")
-				hud.popup("BLIMP! skim the top for speed" if Save.mark_seen("blimp") else "SKIM! +%d m/s" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_ACCENT, "blimp")
+				hud.popup("BLIMP! skim the top for speed" if Save.mark_seen("blimp") else "SKIM! +%d" % flight.ev_aux[k], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_ACCENT, "blimp")
 				_buzz(30)
 			Flight.EV_STORM:
 				_kick = maxf(_kick, 0.4)
@@ -899,6 +900,9 @@ func _handle_events() -> void:
 				hud.popup("TARGET REACHED!", Vector2(_view_size().x * 0.5, 330.0), Hud.C_ACCENT, "flag")
 			Flight.EV_BEST:
 				hud.popup("NEW BEST!", Vector2(_view_size().x * 0.5, 330.0), Hud.C_ACCENT, "trophy")
+	if flight.chain >= 2 and flight.chain != _chain_shown:
+		hud.toast("CHAIN x%d: +%d%% on prizes" % [flight.chain, int(Tuning.chain_bonus * 100.0) * (flight.chain - 1)])
+	_chain_shown = flight.chain
 	flight.ev_n = 0
 
 ## The launch, per launcher: ramp rumble (see frame), slingshot snap, catapult swing, rocket sled ignition.

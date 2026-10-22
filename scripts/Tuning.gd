@@ -121,13 +121,13 @@ var band_edge_2 := 24.0
 var band_edge_3 := 48.0
 var band_mult_0 := 1.0
 var band_mult_1 := 1.5
-var band_mult_2 := 2.0
-var band_mult_3 := 2.5
+var band_mult_2 := 1.75
+var band_mult_3 := 2.0
 const BAND_NAMES := ["LOW", "MID", "HIGH", "SKY"]
 
 ## Mid air: hot air balloons (clip the top to bounce up), kites and geese (slow you on contact).
 var balloon_r := 2.3
-var balloon_kick := 15.0
+var balloon_kick := 17.0
 var balloon_restitution := 0.7
 var kite_slow := 0.9
 var kite_radius := 1.2
@@ -135,14 +135,20 @@ var goose_slow := 0.86
 var goose_radius := 1.0
 ## High air: boost rings, tailwind streams, blimps (skim the top), storm clouds.
 var ring_radius := 3.4
-var ring_boost := 5.0
-var ring_scrap := 3
-var stream_accel := 3.5
+var ring_boost := 6.5
+var ring_scrap := 8                    # prizes pay well: active flying must earn clearly more than gliding
+var balloon_scrap := 90
+var blimp_scrap := 10
+var stream_scrap := 2.0
+var low_rings := 1.0                    # 1: a small launch gets its rings, streams and blimps in the mid air it can reach
+var chain_window := 6.0                 # seconds to reach the next prize to keep a chain going
+var chain_bonus := 0.35                 # each link in a chain pays this much more than the one before per second inside a tailwind
+var stream_accel := 4.0
 var stream_half_height := 3.6
 var stream_len := 42.0
 var blimp_len := 9.0
 var blimp_height := 3.2
-var blimp_boost := 5.0
+var blimp_boost := 6.5
 var blimp_kick := 4.5
 var storm_radius := 5.2
 var storm_down := 15.0
@@ -163,13 +169,13 @@ var w_bird := 1.0
 var w_gear := 0.5
 var w_low := 0.35
 ## Air pattern chances (times each zone's own weights): balloon, kite, geese, weave (scrap leading up a band), ring, stream, blimp, storm, find.
-var w_balloon := 1.6
+var w_balloon := 6.0
 var w_kite := 0.9
 var w_geese := 1.0
 var w_weave := 1.3
-var w_ring := 1.4
-var w_stream := 1.0
-var w_blimp := 0.8
+var w_ring := 3.0
+var w_stream := 1.4
+var w_blimp := 1.3
 var w_storm := 0.7
 var w_find := 0.6
 ## Birds get more common with distance: extra weight per 1000 m.
@@ -300,10 +306,10 @@ var mission_reward_mult := 1.0
 
 # ---------- Economy ----------
 ## Scrap earned per meter flown.
-var scrap_per_meter := 0.38
+var scrap_per_meter := 0.20
 ## Every upgrade's price: base * growth ^ level, times these two global multipliers.
-var cost_mult := 1.4
-var cost_growth_add := 0.0
+var cost_mult := 1.15
+var cost_growth_add := 0.11
 
 ## id, name, max level, base cost, cost growth per level, unit shown in the shop.
 var upgrades: Array[Dictionary] = [

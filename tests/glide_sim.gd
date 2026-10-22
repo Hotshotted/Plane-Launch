@@ -57,7 +57,9 @@ func lv(r := 0, w := 0, b := 0, bo := 0, m := 0) -> Dictionary:
 func _initialize() -> void:
 	tn = root.get_node("Tuning")
 	var args := OS.get_cmdline_user_args()
-	if args.has("bands"):
+	if args.has("pay"):
+		pay()
+	elif args.has("bands"):
 		bands()
 	elif args.has("gear"):
 		gear()
@@ -66,6 +68,48 @@ func _initialize() -> void:
 			singles()
 		ladder()
 	quit(0)
+
+## Does active flying pay? The same upgrades, a passive pilot (just glides well) against one who chases the prizes (rings, blimps,
+## tailwinds, finds, balloons, scrap). Printed per upgrade level with the difference in scrap earned.
+func pay() -> void:
+	var seeds := 60
+	for lvl in [1, 3, 6, 10]:
+		var res := {}
+		for mode in [0, 4]:
+			var levels := lv(lvl, lvl, lvl, mini(lvl, 8), 0)
+			var scrap := 0.0
+			var dist := 0.0
+			var rings := 0.0
+			var blimps := 0.0
+			var wind := 0.0
+			var finds := 0.0
+			var balloons := 0.0
+			var sp := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+			for sd in seeds:
+				var f = load("res://scripts/Flight.gd").new()
+				f.reset(levels, 4000 + sd)
+				f.launch_auto()
+				var t := 0.0
+				while not f.is_over() and t < 400.0:
+					f.advance(1.0 / 60.0, f.pilot(1.0 / 60.0, 1.0, mode == 4))
+					f.ev_n = 0
+					t += 1.0 / 60.0
+				scrap += f.scrap_total()
+				dist += f.distance
+				rings += f.rings_hit
+				blimps += f.blimp_hits
+				wind += f.stream_time
+				finds += f.finds
+				balloons += f.balloon_hits
+				for k in 16:
+					sp[k] += f.spawned[k]
+			res[mode] = [scrap / seeds, dist / seeds, rings / seeds, blimps / seeds, wind / seeds, finds / seeds, balloons / seeds, sp]
+		var p: Array = res[0]
+		var a: Array = res[4]
+		var spw: PackedFloat32Array = a[7]
+		print("L%-2d spawned per flight: balloons %.1f flocks %.1f rings %.1f streams %.1f blimps %.1f storms %.1f finds %.1f" % [lvl, spw[5] / seeds, spw[7] / seeds, spw[8] / seeds, spw[9] / seeds, spw[10] / seeds, spw[11] / seeds, spw[12] / seeds])
+		print("L%-2d passive %6.0f scrap (%5.0f m; rings %.1f blimps %.1f tailwind %.1f s finds %.1f balloons %.1f)" % [lvl, p[0], p[1], p[2], p[3], p[4], p[5], p[6]])
+		print("    seeking %6.0f scrap (%5.0f m; rings %.1f blimps %.1f tailwind %.1f s finds %.1f balloons %.1f)   => %+.0f%% scrap" % [a[0], a[1], a[2], a[3], a[4], a[5], a[6], 100.0 * (a[0] / maxf(p[0], 1.0) - 1.0)])
 
 ## Altitude bands: how a typical flight spends its time in each band, what it reacts to, and whether the sky is ever empty.
 ## Two pilots: 0 = passive (just glides well) and 4 = a player who goes for the prizes. Printed per upgrade level.
