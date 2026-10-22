@@ -82,6 +82,14 @@ arrivals, ease-in-cubic for exits, ease-out-back for things that land. Anything 
 * **Pause:** a ghost button in the top-right corner; Resume (primary), Restart, Quit, and SFX and music sliders; the game also pauses by itself when the window loses focus.
 * Everything runs through one small animator in `Hud`, which the tests switch off (`Hud.animate`) so transitions complete instantly.
 
+### In the world (Phase 3)
+
+* **Outlines on interactive things only:** the glider, launchers, scrap, pads, fans and birds keep the black outline; hills, heaps, props, ground, signs and the launch-screen ambience have none. Depth comes from parallax: a faint far ridge (0.09), hills (0.22), heaps (0.5), the ground (1), and tufts rushing past in front (1.5).
+* **Glider:** every Wings, Body, Booster, Ramp and Magnet level shows (ribs, struts, cross-wires, winglets, rivets, seams, pods, fatter wheels); each frame has its own decals; Whiskers always has his eye, nose, whiskers, scarf and hat above the wings. Wings flex with the climb and rattle at speed.
+* **Launches:** Ramp rumbles and puffs dust; Slingshot snaps with sparks and a hard kick; Catapult swings and kicks at release; Rocket Sled ignites, smokes and rumbles. Each ends with a camera kick off the lip.
+* **Flight:** speed lines and wind streaks scale with speed, bounces lay a dust trail, touchdown is a crunch (debris, kick) followed by a tumble that hops along the ground.
+* **Feedback popups** are chips: a dark pill with a coloured rim, the icon of what happened and the words, popping in and floating up.
+
 ## Studio mark and loading
 
 The studio is **Clear Prop Games**; its mark is a bold three-blade propeller over a gold hub, with the name set in

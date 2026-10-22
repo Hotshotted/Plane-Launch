@@ -69,6 +69,8 @@ var _boost_panel: PanelContainer
 var _boost_pips: Label
 var _boost_style: StyleBoxFlat
 var _pop_labels: Array[Label] = []
+var _pop_styles: Array[StyleBoxFlat] = []
+var _pop_icons: Array[GlyphView] = []
 var _pop_born := PackedFloat32Array()
 var _pop_y := PackedFloat32Array()
 var _next_pop := 0
@@ -613,11 +615,24 @@ func _build_flight_hud() -> void:
 	_boost_pips.offset_bottom = -150
 	_flight_root.add_child(_boost_pips)
 	for i in POPUPS:
-		var p := _label(BODY, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER, 6)
+		# a feedback chip: a dark pill with a coloured rim, an icon and the words
+		var p := _label(BODY, C_TEXT, HORIZONTAL_ALIGNMENT_LEFT, 0)
+		var ps := _box(Color(Style.SURFACE_DARK, 0.9), Style.ACCENT, Style.R_PILL, 4)
+		ps.content_margin_left = 96
+		ps.content_margin_right = 36
+		ps.content_margin_top = 6
+		ps.content_margin_bottom = 6
+		p.add_theme_stylebox_override("normal", ps)
 		p.visible = false
-		p.size = Vector2(560, 70)
+		p.size = Vector2(560, 84)
+		var pi := _icon("scrap", 52, Style.ACCENT)
+		pi.position = Vector2(26, 16)
+		pi.size = Vector2(52, 52)
+		p.add_child(pi)
 		_flight_root.add_child(p)
 		_pop_labels.append(p)
+		_pop_styles.append(ps)
+		_pop_icons.append(pi)
 	_pop_born.resize(POPUPS)
 	_pop_y.resize(POPUPS)
 
@@ -657,14 +672,20 @@ func boost_rect() -> Rect2:
 	return _boost_panel.get_global_rect()
 
 ## Floating text at a screen position ("+1", "BOUNCE!").
-func popup(text: String, pos: Vector2, color: Color) -> void:
+func popup(text: String, pos: Vector2, color: Color, icon: String = "") -> void:
 	var i := _next_pop
 	_next_pop = (_next_pop + 1) % POPUPS
 	var l := _pop_labels[i]
 	l.text = text
 	l.add_theme_color_override("font_color", color)
-	l.size = Vector2(560, 70)
-	l.position = pos - Vector2(280, 35)
+	_pop_styles[i].border_color = color
+	var gl := icon if icon != "" else ("scrap" if color == C_GOLD else ("nobird" if color == C_DANGER else "star"))
+	_pop_icons[i].set_glyph(gl, color)
+	var tw := Style.display().get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, BODY).x
+	var w := tw + 96.0 + 36.0
+	l.size = Vector2(w, 84)
+	l.pivot_offset = Vector2(w * 0.5, 42.0)
+	l.position = Vector2(clampf(pos.x - w * 0.5, 16.0, 1080.0 - w - 16.0), pos.y - 42.0)
 	l.modulate = Color.WHITE
 	l.visible = true
 	_pop_born[i] = _time
@@ -2069,12 +2090,13 @@ func _process(delta: float) -> void:
 		if not l.visible or mode != MODE_FLIGHT:
 			continue
 		var age := _time - _pop_born[i]
-		if age > 0.9:
+		if age > 1.0:
 			l.visible = false
 		else:
-			l.position.y = _pop_y[i] - age * 120.0
+			l.position.y = _pop_y[i] - age * 110.0
+			l.scale = Vector2.ONE * (lerpf(0.5, 1.0, Style.ease_out_back(age / 0.2)) if animate else 1.0)
 			var m := l.modulate
-			m.a = clampf(1.0 - age / 0.9, 0.0, 1.0)
+			m.a = clampf((1.0 - age) * 2.5, 0.0, 1.0)
 			l.modulate = m
 	if _toast.visible and mode == MODE_FLIGHT:
 		var ta := _time - _toast_born

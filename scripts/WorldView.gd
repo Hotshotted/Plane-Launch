@@ -18,6 +18,7 @@ const P_FLAME := 3
 const P_DUST := 4
 const P_SCRAP := 5   # chunks flying off a hard landing
 const P_BUBBLE := 6  # trail bubbles
+const P_WIND := 7    # thin streaks of wind at speed
 
 # ---- palette ----
 const SKY_TOP := Color(0.36, 0.64, 0.88)
@@ -68,6 +69,14 @@ var best_text := ""
 var best_x := 0.0
 var target_x := 0.0     # the daily target flag (0 = none)
 var show_aura := false
+var rumble := 0.0       # 0..1 while the ramp / sled rattles the glider before the launch
+var speed_fx := 0.0     # 0..1: speed lines and wind at high speed
+var tumble := 0.0       # radians: the crunch-and-tumble after touchdown
+var hop := 0.0          # metres: the glider bouncing along on its belly
+var _outline := true    # scenery is drawn without outlines: only things you can interact with get one
+var _scarf := PackedVector2Array()
+var _flex := 0.0
+var _rattle := 0.0
 var ambience := false   # the launch screen is alive: Rusty tinkers, a grinder throws sparks, a crow sits on the heap
 var boost_fx := 0.0     # 0..1 while a boost burns: speed lines
 var _chord_mult := 1.0  # wing length factor of the frame being drawn
@@ -120,6 +129,7 @@ func _ready() -> void:
 	_ramp_top_line.resize(rn)
 	_ramp_bot_line.resize(rn)
 	_zig.resize(9)
+	_scarf.resize(6)
 	for i in 10:
 		_pal.append(Color.WHITE)
 	for p in [_px, _py, _pvx, _pvy, _plife, _pmax, _psize]:
@@ -210,7 +220,7 @@ func _poly(tpl: PackedVector2Array, o: Vector2, rot: float, sc: Vector2, col: Co
 		l[i] = q
 	l[n] = l[0]
 	draw_colored_polygon(f, col)
-	if lw > 0.0:
+	if lw > 0.0 and _outline:
 		draw_polyline(l, BLACK, lw)
 
 func _poly_sq(tpl: PackedVector2Array, o: Vector2, rot: float, size_m: float, col: Color, lw: float = OUTLINE) -> void:
@@ -219,6 +229,10 @@ func _poly_sq(tpl: PackedVector2Array, o: Vector2, rot: float, size_m: float, co
 ## A rectangle centred at pixel (cx, cy), w x h pixels.
 func _rect_m(cx: float, cy: float, w: float, h: float, col: Color, rot: float = 0.0, lw: float = OUTLINE) -> void:
 	_poly(RECT, Vector2(cx, cy), rot, Vector2(w, h), col, lw)
+
+## The outline colour for scenery lines: invisible when scenery goes without outlines.
+func _ink() -> Color:
+	return BLACK if _outline else Color(0, 0, 0, 0)
 
 func _hash(i: int) -> float:
 	var v := sin(float(i) * 12.9898 + 78.233) * 43758.5453
@@ -238,6 +252,7 @@ func _draw() -> void:
 	_size = get_viewport_rect().size
 	_ground_sy = _size.y + cam_bottom * _ppm
 	_update_palette()
+	_outline = false
 	_draw_sky()
 	_draw_clouds()
 	_draw_hills()
@@ -245,14 +260,23 @@ func _draw() -> void:
 	_draw_ground()
 	_draw_props()
 	_draw_signs()
+	_outline = true
 	_draw_target_flag()
+	if rumble > 0.01:   # the ramp rattles the glider before the launch
+		draw_set_transform(Vector2(sin(_time * 93.0), cos(_time * 117.0)) * rumble * 2.6)
 	_draw_ramp()
 	if ambience:
+		_outline = false
 		_draw_ambience()
+		_outline = true
 	_draw_things()
 	_draw_glider()
+	draw_set_transform(Vector2.ZERO)
 	_draw_particles()
 	_draw_speed_lines()
+	_outline = false
+	_draw_foreground()
+	_outline = true
 
 ## Zone index of the world point drawn at screen x.
 func _zone_at_screen(sx: float) -> int:
@@ -313,7 +337,40 @@ func _tri_up(bx: float, by: float, w: float, h: float, col: Color, lw: float = 2
 func _ball(cx: float, cy: float, r: float, col: Color, lw: float = 2.0) -> void:
 	_poly(OCT, Vector2(cx, cy), 0.0, Vector2(r, r), col, lw)
 
+## A faint distant ridge behind the hills: the deepest parallax layer.
+func _draw_haze() -> void:
+	var par := 0.09
+	var w := 30.0
+	var base := cam_x * par
+	var first := int(floorf(base / w)) - 1
+	for i in range(first, first + int(_size.x / (w * _ppm)) + 4):
+		var h := _hash(i + 900)
+		var cx := (i * w - base) * _ppm
+		var z := _zone_at_screen(cx)
+		var col := _zp(z, 3).lerp(_pal[2], 0.62)
+		_tri_up(cx, _ground_sy, w * 1.7 * _ppm, (9.0 + h * 9.0) * _ppm * 0.9, col, 0.0)
+
+## Tufts and posts rushing past in front, faster than the ground: depth.
+func _draw_foreground() -> void:
+	var par := 1.5
+	var w := 11.0
+	var base := cam_x * par
+	var first := int(floorf(base / w)) - 1
+	for i in range(first, first + int(_size.x / (w * _ppm * par)) + 4):
+		var h := _hash(i + 1300)
+		var cx := (i * w + h * 5.0 - base) * _ppm
+		if cx < -200.0 or cx > _size.x + 200.0:
+			continue
+		var z := _zone_at_screen(cx)
+		var col := _zp(z, 7).darkened(0.45)
+		var u := _ppm
+		var hh := (0.9 + h * 1.3) * u
+		_tri_up(cx, _ground_sy + 0.5 * u, 0.7 * u, hh, col, 0.0)
+		_tri_up(cx + 0.45 * u, _ground_sy + 0.5 * u, 0.6 * u, hh * 0.7, col, 0.0)
+		_tri_up(cx - 0.42 * u, _ground_sy + 0.5 * u, 0.55 * u, hh * 0.6, col, 0.0)
+
 func _draw_hills() -> void:
+	_draw_haze()
 	var par := 0.22
 	var w := 16.0
 	var base := cam_x * par
@@ -387,7 +444,7 @@ func _draw_piles() -> void:
 					draw_rect(Rect2(cx - 1.2 * u, gy - bh + (0.8 + wy * 1.5) * u, 0.7 * u, 0.7 * u), Color(1, 0.95, 0.6, 0.65))
 					draw_rect(Rect2(cx + 0.2 * u, gy - bh + (0.8 + wy * 1.5) * u, 0.7 * u, 0.7 * u), Color(1, 0.95, 0.6, 0.65))
 			6:   # palms and a beach hut
-				draw_line(Vector2(cx, gy), Vector2(cx + 0.6 * u, gy - 4.2 * u), BLACK, 9.0)
+				draw_line(Vector2(cx, gy), Vector2(cx + 0.6 * u, gy - 4.2 * u), _ink(), 9.0)
 				draw_line(Vector2(cx, gy), Vector2(cx + 0.6 * u, gy - 4.2 * u), Color(0.6, 0.45, 0.28), 5.0)
 				for lf in 4:
 					_poly(TRI, Vector2(cx + 0.6 * u + (lf - 1.5) * 0.9 * u, gy - 4.5 * u), (lf - 1.5) * 0.7, Vector2(0.9, 2.4) * u, c5, 2.0)
@@ -426,7 +483,7 @@ func _draw_ground() -> void:
 					var wy := gy + 0.9 * _ppm + sin(x * 0.02 + _time * 2.0) * 5.0
 					draw_line(Vector2(x, wy), Vector2(minf(x + 70.0, xb), wy), Color(1, 1, 1, 0.45), 4.0)
 					x += 140.0
-				draw_line(Vector2(xa, gy), Vector2(xb, gy), BLACK, 4.0)
+				draw_line(Vector2(xa, gy), Vector2(xb, gy), _ink(), 4.0)
 			2:   # clouds: soft, bouncy
 				draw_rect(Rect2(xa, gy, w, _size.y - gy + 8), top.darkened(0.12))
 				var x := xa - fmod(cam_x * _ppm, 3.0 * _ppm)
@@ -437,7 +494,7 @@ func _draw_ground() -> void:
 			3:   # cheese with holes
 				draw_rect(Rect2(xa, gy, w, _size.y - gy + 8), dirt)
 				draw_rect(Rect2(xa, gy, w, 1.2 * _ppm), top)
-				draw_line(Vector2(xa, gy), Vector2(xb, gy), BLACK, 4.0)
+				draw_line(Vector2(xa, gy), Vector2(xb, gy), _ink(), 4.0)
 				var hole0 := int(floorf((cam_x + xa / _ppm) / 6.0)) - 1
 				for hh in range(hole0, hole0 + int(w / (6.0 * _ppm)) + 3):
 					var hx := (hh * 6.0 + _hash(hh + 9) * 3.0 - cam_x) * _ppm
@@ -450,11 +507,11 @@ func _draw_ground() -> void:
 					var tx := (tt * 3.0 - cam_x) * _ppm
 					var hue := fmod(tt * 0.13 + _time * 0.6, 1.0)
 					draw_rect(Rect2(tx, gy, 3.0 * _ppm - 3.0, 1.4 * _ppm), Color.from_hsv(hue, 0.7, 0.9))
-				draw_line(Vector2(xa, gy), Vector2(xb, gy), BLACK, 4.0)
+				draw_line(Vector2(xa, gy), Vector2(xb, gy), _ink(), 4.0)
 			_:   # dirt
 				draw_rect(Rect2(xa, gy, w, _size.y - gy + 8), dirt)
 				draw_rect(Rect2(xa, gy, w, 1.2 * _ppm), top)
-				draw_line(Vector2(xa, gy), Vector2(xb, gy), BLACK, 4.0)
+				draw_line(Vector2(xa, gy), Vector2(xb, gy), _ink(), 4.0)
 				var st0 := int(floorf((cam_x + xa / _ppm) / 5.0)) - 1
 				for k in range(st0, st0 + int(w / (5.0 * _ppm)) + 3):
 					var sh := _hash(k + 40)
@@ -483,10 +540,10 @@ func _draw_props() -> void:
 				match kind:
 					0:
 						_rect_m(o.x, o.y - 0.7 * u, 1.4 * u, 1.4 * u, Color(0.66, 0.5, 0.28))
-						draw_line(o + Vector2(-0.7, -1.4) * u, o + Vector2(0.7, 0.0) * u, BLACK, 2.0)
+						draw_line(o + Vector2(-0.7, -1.4) * u, o + Vector2(0.7, 0.0) * u, _ink(), 2.0)
 					1:
 						_rect_m(o.x, o.y - 0.8 * u, 1.1 * u, 1.6 * u, Color(0.7, 0.28, 0.22))
-						draw_line(o + Vector2(-0.55, -1.2) * u, o + Vector2(0.55, -1.2) * u, BLACK, 2.0)
+						draw_line(o + Vector2(-0.55, -1.2) * u, o + Vector2(0.55, -1.2) * u, _ink(), 2.0)
 					2:
 						_poly(OCT, o + Vector2(0, -0.45 * u), 0.0, Vector2(1.1, 0.45) * u, Color(0.2, 0.2, 0.22))
 						_poly(OCT, o + Vector2(0, -1.3 * u), 0.0, Vector2(0.95, 0.42) * u, Color(0.24, 0.24, 0.26))
@@ -499,20 +556,20 @@ func _draw_props() -> void:
 				match kind:
 					0, 1:   # hay bales
 						_box(o.x, o.y, 1.6 * u, 1.3 * u, Color(0.92, 0.8, 0.35))
-						draw_line(o + Vector2(-0.8, -0.65) * u, o + Vector2(0.8, -0.65) * u, BLACK, 2.0)
+						draw_line(o + Vector2(-0.8, -0.65) * u, o + Vector2(0.8, -0.65) * u, _ink(), 2.0)
 					2:   # fence
 						for k in 3:
 							_box(o.x + (k - 1) * 0.9 * u, o.y, 0.22 * u, 1.3 * u, Color(0.8, 0.7, 0.55), 1.5)
-						draw_line(o + Vector2(-1.2, -0.9) * u, o + Vector2(1.2, -0.9) * u, BLACK, 3.0)
+						draw_line(o + Vector2(-1.2, -0.9) * u, o + Vector2(1.2, -0.9) * u, _ink(), 3.0)
 					3:   # scarecrow
 						_box(o.x, o.y, 0.2 * u, 2.2 * u, Color(0.5, 0.35, 0.2), 1.5)
-						draw_line(o + Vector2(-0.9, -1.6) * u, o + Vector2(0.9, -1.6) * u, BLACK, 5.0)
+						draw_line(o + Vector2(-0.9, -1.6) * u, o + Vector2(0.9, -1.6) * u, _ink(), 5.0)
 						_ball(o.x, o.y - 2.4 * u, 0.4 * u, Color(0.9, 0.75, 0.4))
 			2:   # reeds and stones by the river
 				var by := o.y - (0.0 if not water else 0.0)
 				for k in 4:
 					var rx := o.x + (k - 1.5) * 0.35 * u
-					draw_line(Vector2(rx, by), Vector2(rx + sin(_time * 2.0 + k + h * 9.0) * 4.0, by - (1.6 + k * 0.25) * u), BLACK, 6.0)
+					draw_line(Vector2(rx, by), Vector2(rx + sin(_time * 2.0 + k + h * 9.0) * 4.0, by - (1.6 + k * 0.25) * u), _ink(), 6.0)
 					draw_line(Vector2(rx, by), Vector2(rx + sin(_time * 2.0 + k + h * 9.0) * 4.0, by - (1.6 + k * 0.25) * u), Color(0.4, 0.62, 0.25), 3.0)
 				if kind == 0:
 					_poly(OCT, o + Vector2(1.6, -0.3) * u, 0.0, Vector2(0.9, 0.5) * u, Color(0.55, 0.55, 0.58))
@@ -577,7 +634,7 @@ func _draw_props() -> void:
 					2:   # egg
 						_poly(OCT, o + Vector2(0, -0.8 * u), 0.0, Vector2(0.8, 1.0) * u, Color(0.95, 0.92, 0.8))
 					3:   # bone
-						draw_line(o + Vector2(-1.0, -0.4) * u, o + Vector2(1.0, -0.4) * u, BLACK, 9.0)
+						draw_line(o + Vector2(-1.0, -0.4) * u, o + Vector2(1.0, -0.4) * u, _ink(), 9.0)
 						draw_line(o + Vector2(-1.0, -0.4) * u, o + Vector2(1.0, -0.4) * u, Color(0.95, 0.95, 0.9), 5.0)
 			10:  # disco
 				match kind:
@@ -601,7 +658,7 @@ func _draw_signs() -> void:
 		var sx := _sx(wx)
 		if sx < -200.0 or sx > _size.x + 200.0:
 			continue
-		draw_line(Vector2(sx, _ground_sy), Vector2(sx, _ground_sy - 4.0 * _ppm), BLACK, 8.0)
+		draw_line(Vector2(sx, _ground_sy), Vector2(sx, _ground_sy - 4.0 * _ppm), _ink(), 8.0)
 		draw_line(Vector2(sx, _ground_sy), Vector2(sx, _ground_sy - 4.0 * _ppm), Color(0.8, 0.8, 0.75), 4.0)
 		_rect_m(sx, _ground_sy - 4.2 * _ppm, 3.6 * _ppm, 1.6 * _ppm, Color(0.95, 0.85, 0.3))
 		draw_string(_font, Vector2(sx - 1.6 * _ppm, _ground_sy - 3.85 * _ppm), _sign_text[k - 1], HORIZONTAL_ALIGNMENT_CENTER, 3.2 * _ppm, 34, BLACK)
@@ -609,7 +666,7 @@ func _draw_signs() -> void:
 		var bx := _sx(best_x)
 		if bx > -300.0 and bx < _size.x + 300.0:
 			var top := _ground_sy - 9.0 * _ppm
-			draw_line(Vector2(bx, _ground_sy), Vector2(bx, top), BLACK, 9.0)
+			draw_line(Vector2(bx, _ground_sy), Vector2(bx, top), _ink(), 9.0)
 			draw_line(Vector2(bx, _ground_sy), Vector2(bx, top), Color(0.9, 0.9, 0.9), 5.0)
 			var flag_col := Color(0.2, 0.8, 0.4) if (flight.passed_best) else Color(0.95, 0.25, 0.25)
 			var sway := sin(_time * 5.0) * 0.25
@@ -918,7 +975,8 @@ func _draw_fan(sx: float, base: float, skin: int, power: float) -> void:
 
 ## Horizontal streaks across the screen while a boost burns.
 func _draw_speed_lines() -> void:
-	if boost_fx <= 0.01:
+	var fx := maxf(boost_fx, speed_fx * 0.55)
+	if fx <= 0.01:
 		return
 	for k in 16:
 		var h := _hash(k + 700)
@@ -926,7 +984,7 @@ func _draw_speed_lines() -> void:
 		var len := (0.25 + 0.4 * h) * _size.x
 		var x := fmod(_time * (2400.0 + h * 1800.0) + h * 3000.0, _size.x + len * 2.0)
 		x = _size.x + len - x
-		draw_line(Vector2(x, y), Vector2(x + len, y), Color(1, 1, 1, 0.5 * boost_fx * (0.4 + h)), 3.0 + 4.0 * h)
+		draw_line(Vector2(x, y), Vector2(x + len, y), Color(1, 1, 1, 0.5 * fx * (0.4 + h)), 3.0 + 4.0 * h)
 
 func _draw_bird(sx: float, sy: float, wx: float, z: int, scale: float) -> void:
 	var flap := sin(_time * 14.0 + wx)
@@ -953,6 +1011,8 @@ func _draw_particles() -> void:
 		match _pkind[i]:
 			P_FLAME:
 				draw_circle(o, sz * 0.5, col)
+			P_WIND:
+				draw_line(o, o + Vector2(sz * 5.0, 0.0), Color(1, 1, 1, col.a * 0.4), 2.5)
 			P_BUBBLE:
 				draw_circle(o, sz * 0.5, Color(col.r, col.g, col.b, col.a * 0.3))
 				draw_arc(o, sz * 0.5, 0.0, TAU, 12, Color(0.2, 0.4, 0.6, col.a), 2.0)
@@ -1043,10 +1103,15 @@ func _draw_glider() -> void:
 	var f := flight
 	if log_layers:
 		layer_log.clear()
-	var o := Vector2(_sx(f.x), _sy(f.y))
-	var rot := -f.theta
+	var o := Vector2(_sx(f.x), _sy(f.y) - hop * _ppm)
+	var rot := -f.theta + tumble
 	if f.stall_amount > 0.0:
 		rot += sin(_time * 40.0) * 0.06 * f.stall_amount
+	# wing flex and rattle: the wings bend with the climb and buzz at speed
+	var spd := clampf((f.speed() - 28.0) / 60.0, 0.0, 1.0) if f.phase == Flight.PH_AIR else 0.0
+	_flex = clampf(f.vy * 0.03, -0.5, 0.5) + f.stall_amount * 0.2
+	_rattle = sin(_time * 83.0) * 0.55 * spd + sin(_time * 131.0) * 0.3 * spd
+	rot += sin(_time * 97.0) * 0.012 * spd
 	_gscale = GLIDER_SCALE * (1.0 + 0.18 * pulse)
 	var u := _ppm * _gscale       # meters -> pixels (drawn a bit bigger than life so the upgrades read)
 	if pulse > 0.02:
@@ -1110,6 +1175,25 @@ func _draw_glider() -> void:
 		fuse = TUB
 	_poly(fuse, o, rot, fuse_sc, body_col)
 	_ll("fuselage")
+	# body detail by level and frame: rivets, panel seams, plates, tape, feathers
+	var rivets := 1 + bl / 2
+	for rk in rivets:
+		draw_circle(_rot_pt(Vector2(-1.5 + rk * 0.5, -0.14), c, s, u, o), 0.05 * u, body_col.darkened(0.45))
+	if tier >= 1:
+		draw_line(_rot_pt(Vector2(0.3, -0.4), c, s, u, o), _rot_pt(Vector2(0.3, 0.42), c, s, u, o), Color(0, 0, 0, 0.3), 2.0)
+		draw_line(_rot_pt(Vector2(-0.9, -0.38), c, s, u, o), _rot_pt(Vector2(-0.9, 0.42), c, s, u, o), Color(0, 0, 0, 0.3), 2.0)
+	match f.frame_id:
+		"scrapper":
+			_poly(RECT, _rot_pt(Vector2(-0.4, 0.05), c, s, u, o), rot + 0.35, Vector2(0.28, 0.9) * u, Color(0.85, 0.82, 0.7, 0.9), 0.0)   # a strip of tape
+		"feather":
+			for fk in 3:
+				_poly(DIAMOND, _rot_pt(Vector2(-2.4 - fk * 0.18, -0.12 + fk * 0.12), c, s, u, o), rot - 0.4 + fk * 0.4, Vector2(0.5, 0.2) * u, Color(0.98, 0.96, 0.88), 1.5)
+		"anvil":
+			_poly(RECT, _rot_pt(Vector2(0.1, 0.12), c, s, u, o), rot, Vector2(1.2, 0.5) * u, body_col.darkened(0.25), 1.5)
+			for ak in 4:
+				draw_circle(_rot_pt(Vector2(-0.4 + ak * 0.33, 0.12), c, s, u, o), 0.05 * u, body_col.lightened(0.3))
+		"pogo":
+			draw_line(_rot_pt(Vector2(-1.2, 0.16), c, s, u, o), _rot_pt(Vector2(1.5, 0.16), c, s, u, o), Color(1, 1, 1, 0.8), 0.14 * u)
 	if tier >= 2:
 		_poly(RECT, o + Vector2(0.2 * c - 0.1 * s, 0.2 * s + 0.1 * c) * u, rot, Vector2(4.2, 0.14) * u, Color(0.95, 0.95, 0.95), 1.0)
 	# --- front wing: bigger and better with every Wings level ---
@@ -1129,6 +1213,22 @@ func _draw_glider() -> void:
 	_poly(OCT, head, rot, Vector2(0.48, 0.48) * u, Color(0.93, 0.76, 0.6), 2.5)
 	_poly(RECT, head + Vector2(0.2 * c, 0.2 * s) * u, rot, Vector2(0.32, 0.18) * u, Color(0.15, 0.15, 0.2), 1.5)
 	_ll("head")
+	# Whiskers: an eye, a nose, fluttering whiskers and a scarf that streams harder with speed
+	var eye := _rot_pt(Vector2(0.2 + 0.14, hy - 0.08), c, s, u, o)
+	draw_circle(eye, 0.085 * u, Color.WHITE)
+	draw_circle(eye + Vector2(0.03 * c, 0.03 * s) * u, 0.04 * u, BLACK)
+	draw_circle(_rot_pt(Vector2(0.2 + 0.46, hy + 0.04), c, s, u, o), 0.06 * u, Color(0.25, 0.12, 0.1))
+	var fl := sin(_time * 18.0) * 0.04 + _rattle * 0.03
+	for wk in 3:
+		var yy := 0.02 + wk * 0.07
+		var a0 := _rot_pt(Vector2(0.2 + 0.4, hy + yy), c, s, u, o)
+		var a1 := _rot_pt(Vector2(0.2 + 0.88, hy + yy - 0.1 + wk * 0.1 + fl), c, s, u, o)
+		draw_line(a0, a1, Color(1, 1, 1, 0.9), 1.6)
+	for k in 6:
+		var kk := float(k)
+		_scarf[k] = _rot_pt(Vector2(0.02 - 0.26 * kk, hy + 0.3 + kk * 0.05 + sin(_time * 9.0 + kk * 0.9) * 0.06 * kk * (0.4 + spd * 1.8)), c, s, u, o)
+	draw_polyline(_scarf, BLACK, 7.0)
+	draw_polyline(_scarf, Color(0.9, 0.25, 0.2), 4.0)
 	_draw_hat(o, rot, c, s, u, hy)
 	# --- wheels (the Pogo bounces on a spring instead) ---
 	if f.frame_id == "pogo":
@@ -1143,7 +1243,9 @@ func _draw_glider() -> void:
 		_poly(RECT, bot, rot, Vector2(0.9, 0.2) * u, Color(0.25, 0.25, 0.3), 2.5)
 	for wxp in ([] if f.frame_id == "pogo" else [-1.1, 1.0]):
 		var wp := o + Vector2(wxp * c - 0.62 * s, wxp * s + 0.62 * c) * u
-		_poly(OCT, wp, 0.0, Vector2(0.27, 0.27) * u, Color(0.2, 0.2, 0.22), 2.5)
+		var wr := 0.27 + 0.012 * f.lv_ramp        # the Ramp upgrade fits fatter wheels
+		_poly(OCT, wp, 0.0, Vector2(wr, wr) * u, Color(0.2, 0.2, 0.22), 2.5)
+		draw_circle(wp, wr * 0.4 * u, Color(0.7, 0.72, 0.78))
 	# --- magnet ---
 	if f.lv_magnet > 0:
 		var ms := 0.55 + 0.07 * f.lv_magnet
@@ -1184,8 +1286,9 @@ func _wing(o: Vector2, rot: float, root: Vector2, chord: float, col: Color, fron
 	var depth := 0.55 + 0.05 * flight.lv_wings
 	var p0 := root + Vector2(chord * 0.5, 0.0)
 	var p1 := root - Vector2(chord * 0.5, 0.0)
-	var p2 := p1 + Vector2(-depth * 1.2, -depth * 1.1 - 0.15)
-	var p3 := p0 + Vector2(-depth * 1.2, -depth * 1.1 - 0.15)
+	var bend := Vector2(0.0, -_flex * chord * 0.16 + _rattle * 0.05)      # the far edge flexes
+	var p2 := p1 + Vector2(-depth * 1.2, -depth * 1.1 - 0.15) + bend
+	var p3 := p0 + Vector2(-depth * 1.2, -depth * 1.1 - 0.15) + bend * 1.3
 	var f := _fill[4]
 	var l := _line[4]
 	f[0] = _rot_pt(p0, c, s, u, o)
@@ -1207,6 +1310,9 @@ func _wing(o: Vector2, rot: float, root: Vector2, chord: float, col: Color, fron
 		var a := Vector2((root.x + 0.4) * c - (root.y) * s, (root.x + 0.4) * s + (root.y) * c) * u + o
 		var b := Vector2((root.x + 0.4) * c - (root.y + 0.9) * s, (root.x + 0.4) * s + (root.y + 0.9) * c) * u + o
 		draw_line(a, b, BLACK, 3.0)
+		if flight.lv_wings >= 6:   # cross-bracing wires
+			var b2 := Vector2((root.x - 0.5) * c - (root.y + 0.9) * s, (root.x - 0.5) * s + (root.y + 0.9) * c) * u + o
+			draw_line(a, b2, Color(0, 0, 0, 0.6), 2.0)
 	# winglet at the tip
 	if flight.lv_wings >= 6:
 		var tip := f[3]

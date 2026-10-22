@@ -1362,6 +1362,71 @@ func _initialize() -> void:
 	HudS.animate = false
 	hm.settle()
 
+	print("5d. in-game polish: launch sequences, flight fx, landing, popups, outlines")
+	main._to_shop()
+	# each launcher has a launch sequence: rumble (ramp, sled) before the lip and a camera kick at it
+	for lid5d in ["ramp", "sling", "catapult", "sled"]:
+		sv.launchers_owned[lid5d] = true
+		sv.launcher = lid5d
+		main._to_shop()
+		main.launch()
+		if main.flight.phase == main.flight.PH_AIM:
+			main.flight.set_aim(1.0, tn.sling_default_angle)
+			main.flight.fire()
+		var max_rumble := 0.0
+		var max_kick := 0.0
+		var steps := 0
+		while main.flight.phase != main.flight.PH_AIR and steps < 900:
+			main.frame(1.0 / 60.0, 1.0 / 60.0)
+			max_rumble = maxf(max_rumble, main.world.rumble)
+			steps += 1
+		for k in 4:
+			main.frame(1.0 / 60.0, 1.0 / 60.0)
+			max_kick = maxf(max_kick, main._kick)
+		var wants_rumble: bool = lid5d == "ramp" or lid5d == "sled"
+		check((max_rumble > 0.2) == wants_rumble and max_kick > 0.4, "%s launch: rumble %.2f, camera kick %.2f at the lip" % [lid5d, max_rumble, max_kick])
+	sv.launcher = "ramp"
+	# speed lines and wind at speed
+	main._to_shop()
+	main.launch()
+	while main.flight.phase != main.flight.PH_AIR:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+	main.world.clear_particles()
+	main.flight.vx = 60.0
+	main.flight.vy = 0.0
+	for k in 40:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+		main.flight.vx = maxf(main.flight.vx, 55.0)
+	check(main.world.speed_fx > 0.3 and main.world.live_particles() > 0, "at speed: speed lines (%.2f) and wind streaks (%d particles)" % [main.world.speed_fx, main.world.live_particles()])
+	# a chunky landing: debris, a hard kick, then the glider tumbles and hops along
+	main._kick = 0.0
+	main.flight._touch_down()
+	for k in 3:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+	check(main._kick > 0.6 and main.world.live_particles() > 8, "landing: a hard camera kick (%.2f) and a burst of debris (%d)" % [main._kick, main.world.live_particles()])
+	var tumble_seen := 0.0
+	for k in 20:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+		tumble_seen = maxf(tumble_seen, absf(main.world.tumble))
+	check(tumble_seen > 0.5, "landing: the glider tumbles (%.2f rad)" % tumble_seen)
+	main._to_shop()
+	check(main.world.tumble == 0.0 and main.world.hop == 0.0 and main.world.rumble == 0.0, "back on the launch screen the glider is upright again")
+	# feedback popups are chips: a pill with an icon, sized to the words
+	main.hud.set_mode(1)
+	main.hud.popup("BOUNCE! +speed", Vector2(540, 800), HudS.C_ACCENT, "bounce")
+	main.hud.popup("OK", Vector2(540, 600), HudS.C_GOLD, "scrap")
+	var pc_long: Control = main.hud._pop_labels[(main.hud._next_pop + main.hud.POPUPS - 2) % main.hud.POPUPS]
+	var pc_short: Control = main.hud._pop_labels[(main.hud._next_pop + main.hud.POPUPS - 1) % main.hud.POPUPS]
+	check(pc_long.size.x > pc_short.size.x + 150.0 and pc_long.size.y >= 80.0, "popup chips are sized to their words (%.0f vs %.0f px)" % [pc_long.size.x, pc_short.size.x])
+	check(main.hud._pop_icons[(main.hud._next_pop + main.hud.POPUPS - 2) % main.hud.POPUPS].id == "bounce", "and carry the icon of what happened")
+	main.hud.set_mode(0)
+	# scenery has no outlines; interactive objects keep theirs
+	main.world._outline = false
+	check(main.world._ink().a == 0.0, "scenery lines are invisible (no outlines on scenery)")
+	main.world._outline = true
+	check(main.world._ink() == Color(0, 0, 0), "interactive objects keep their black outline")
+	main._to_shop()
+
 	print("6. save file")
 	sv.reset_all()
 	sv.add_scrap(321.0)

@@ -43,6 +43,15 @@ var _aim_start := Vector2.ZERO
 
 # frame time
 var _grinder_t := 0.0
+var _prev_phase := -1
+var _dust_left := 0.0           # seconds of dust trail still to lay (after a bounce)
+var _dust_t := 0.0
+var _wind_t := 0.0
+var _smoke_t := 0.0
+var _tumble_w := 0.0            # the crunch-and-tumble after touchdown: spin rate (rad/s), height and its speed
+var _tumble_a := 0.0
+var _hop_y := 0.0
+var _hop_v := 0.0
 var _skip_frames := 0
 var _suspended := false
 var _warming := false
@@ -165,7 +174,7 @@ func _prewarm() -> void:
 			_prewarm_zone(zi)
 		if now - t_refresh > 300:
 			t_refresh = now
-			for k in 6:
+			for k in 8:
 				world.spawn(k, 4.0 + k * 3.0, 6.0, 1.0, 1.0, 0.6, 0.35, Color(1, 0.8, 0.3))
 			for k in 4:
 				hud.popup("BOUNCE! +%d" % (10 + k), Vector2(300 + k * 150, 800), Color.WHITE)
@@ -209,6 +218,13 @@ func _to_shop(snap: bool = true, results: bool = false) -> void:
 	flight.best_x = Save.best_distance
 	_set_best_text()
 	paused = false
+	world.rumble = 0.0
+	world.speed_fx = 0.0
+	world.tumble = 0.0
+	world.hop = 0.0
+	_tumble_a = 0.0
+	_hop_y = 0.0
+	_prev_phase = -1
 	world.ambience = true
 	hud.set_mode(Hud.MODE_SHOP)
 	hud.refresh_shop(last_result, bonus_charge > 0)
@@ -254,6 +270,8 @@ func _start_flight(daily: bool) -> void:
 		_touch_hold[i] = 0
 		_touch_boost[i] = 0
 	world.ambience = false
+	_prev_phase = -1
+	_dust_left = 0.0
 	hud.set_mode(Hud.MODE_FLIGHT)
 	if daily:
 		hud.set_daily_target(Save.daily_target)
@@ -545,6 +563,7 @@ func frame(delta: float, raw_delta: float = 0.0) -> void:
 	if state == STATE_FLIGHT and delta > 0.0:
 		flight.advance(delta, is_holding())
 		_handle_events()
+		_flight_fx(delta)
 		if flight.boost_left > 0.0:
 			_boost_flames()
 		if flight.phase == Flight.PH_AIR and Save.trail != "none":
@@ -668,27 +687,35 @@ func _handle_events() -> void:
 			Flight.EV_SCRAP:
 				world.burst(WorldView.P_SPARK, ex, ey, 5, 6.0, 0.4, 0.3, Hud.C_GOLD, rng)
 				var scrap_text := "SCRAP! +%d" % flight.ev_val[k] if Save.mark_seen("scrap") else "+%d" % flight.ev_val[k]
-				hud.popup(scrap_text, world.to_screen(ex, ey) + Vector2(0, -50), Hud.C_GOLD)
+				hud.popup(scrap_text, world.to_screen(ex, ey) + Vector2(0, -50), Hud.C_GOLD, "scrap")
 			Flight.EV_PAD:
 				world.burst(WorldView.P_RUBBER, ex, ey + 0.5, 8, 7.0, 0.5, 0.4, Color(0.2, 0.2, 0.22), rng)
 				var pad_text := "BOUNCE! +speed" if Save.mark_seen("pad") else "BOUNCE! +%d m/s" % flight.ev_val[k]
-				hud.popup(pad_text, world.to_screen(ex, ey) + Vector2(0, -160), Hud.C_ACCENT)
+				hud.popup(pad_text, world.to_screen(ex, ey) + Vector2(0, -160), Hud.C_ACCENT, "bounce")
 				_buzz(25)
+				_dust_left = 0.6
 			Flight.EV_BIRD:
 				world.burst(WorldView.P_FEATHER, ex, ey, 9, 7.0, 0.8, 0.5, Color(0.8, 0.75, 0.95), rng)
 				var bird_text := "BIRD! -speed" if Save.mark_seen("bird") else "BIRD! -%d m/s" % flight.ev_val[k]
-				hud.popup(bird_text, world.to_screen(ex, ey) + Vector2(0, -100), Hud.C_DANGER)
+				hud.popup(bird_text, world.to_screen(ex, ey) + Vector2(0, -100), Hud.C_DANGER, "nobird")
 				_buzz(60)
 			Flight.EV_FAN:
 				var fan_text := "UPDRAFT! +height" if Save.mark_seen("fan") else "UPDRAFT!"
-				hud.popup(fan_text, world.to_screen(ex, ey) + Vector2(0, -140), Hud.C_TEXT)
+				hud.popup(fan_text, world.to_screen(ex, ey) + Vector2(0, -140), Hud.C_TEXT, "updraft")
 			Flight.EV_BOOST:
 				_kick = 1.0
-				hud.popup("BOOST +%d m/s" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -160), Hud.C_ACCENT)
+				hud.popup("BOOST +%d m/s" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -160), Hud.C_ACCENT, "boost")
 				_buzz(40)
 			Flight.EV_LAND:
-				world.burst(WorldView.P_DUST, ex, 0.3, 10, 6.0, 0.7, 0.6, Color(0.7, 0.6, 0.45), rng)
-				world.burst(WorldView.P_SCRAP, ex, 0.6, 5, 7.0, 0.8, 0.35, Color(0.6, 0.6, 0.62), rng)
+				# a chunky crunch: a big burst of dust and bolts, a hard camera kick, then the glider tumbles along
+				world.burst(WorldView.P_DUST, ex, 0.3, 16, 8.0, 0.9, 0.8, Color(0.7, 0.6, 0.45), rng)
+				world.burst(WorldView.P_SCRAP, ex, 0.6, 12, 9.0, 1.0, 0.4, Color(0.6, 0.6, 0.62), rng)
+				world.burst(WorldView.P_SPARK, ex, 0.4, 8, 7.0, 0.5, 0.3, Color(1.0, 0.8, 0.3), rng)
+				_kick = 1.0
+				_tumble_w = clampf(flight.vx * 0.3, 3.0, 10.0)
+				_tumble_a = 0.0
+				_hop_y = 0.0
+				_hop_v = clampf(flight.vx * 0.12, 2.5, 7.0)
 				_buzz(80)
 			Flight.EV_ZONE:
 				var zn := Tuning.zone_name(flight.ev_val[k])
@@ -701,13 +728,102 @@ func _handle_events() -> void:
 				var cloud := flight.ev_val[k] == 2
 				world.burst(WorldView.P_SPARK, ex, 0.4, 7, 6.0, 0.5, 0.35, Color(1, 1, 1) if cloud else Color(0.6, 0.85, 1.0), rng)
 				var skip_text := ("BOING!" if cloud else "SKIP!") + (" +bounce" if Save.mark_seen("cloud" if cloud else "water") else "")
-				hud.popup(skip_text, world.to_screen(ex, 1.5) + Vector2(0, -100), Hud.C_TEXT)
+				hud.popup(skip_text, world.to_screen(ex, 1.5) + Vector2(0, -100), Hud.C_TEXT, "skip")
 				_buzz(20)
+				_dust_left = 0.4
+			Flight.EV_LAUNCH:
+				_launch_fx()
 			Flight.EV_TARGET:
-				hud.popup("TARGET REACHED!", Vector2(_view_size().x * 0.5, 330.0), Hud.C_ACCENT)
+				hud.popup("TARGET REACHED!", Vector2(_view_size().x * 0.5, 330.0), Hud.C_ACCENT, "flag")
 			Flight.EV_BEST:
-				hud.popup("NEW BEST!", Vector2(_view_size().x * 0.5, 330.0), Hud.C_ACCENT)
+				hud.popup("NEW BEST!", Vector2(_view_size().x * 0.5, 330.0), Hud.C_ACCENT, "trophy")
 	flight.ev_n = 0
+
+## The launch, per launcher: ramp rumble (see frame), slingshot snap, catapult swing, rocket sled ignition.
+func _launch_fx() -> void:
+	match flight.launcher_id:
+		"sling":
+			var fork := Vector2(0.0, 5.0)
+			world.burst(WorldView.P_SPARK, fork.x, fork.y, 10, 8.0, 0.5, 0.3, Color(0.95, 0.4, 0.3), rng)
+			_kick = 1.0
+			_buzz(60)
+		"catapult":
+			world.burst(WorldView.P_DUST, flight.pivot.x, 0.4, 12, 6.0, 0.8, 0.7, Color(0.7, 0.6, 0.45), rng)
+			_kick = 0.5
+			_buzz(40)
+		"sled":
+			world.burst(WorldView.P_FLAME, flight.x - 2.5, flight.y, 14, 7.0, 0.6, 1.0, Color(1.0, 0.6, 0.15), rng)
+			world.burst(WorldView.P_DUST, flight.x - 2.5, flight.y, 10, 5.0, 0.9, 0.9, Color(0.75, 0.75, 0.78), rng)
+			_kick = 0.7
+			_buzz(60)
+		_:
+			world.burst(WorldView.P_DUST, flight.x, flight.y, 6, 4.0, 0.6, 0.5, Color(0.7, 0.6, 0.45), rng)
+			_buzz(25)
+
+## Off the lip: a camera kick and a puff, bigger for the bigger launchers.
+func _lip_fx() -> void:
+	var k := 0.7
+	match flight.launcher_id:
+		"sling":
+			k = 0.8
+		"catapult":
+			k = 1.1
+		"sled":
+			k = 1.3
+	_kick = maxf(_kick, k)
+	world.burst(WorldView.P_DUST, flight.x, flight.y - 1.0, 8, 6.0, 0.6, 0.6, Color(0.8, 0.75, 0.65), rng)
+	world.burst(WorldView.P_SPARK, flight.x, flight.y - 0.5, 6, 7.0, 0.4, 0.28, Color(1.0, 0.85, 0.4), rng)
+	_buzz(45)
+
+## Per-frame flight effects (all pooled particles): rumble, speed lines, wind, dust trail, the landing tumble.
+func _flight_fx(delta: float) -> void:
+	var ph := flight.phase
+	if _prev_phase == Flight.PH_RAMP and ph == Flight.PH_AIR:
+		_lip_fx()
+	_prev_phase = ph
+	var rumbling := ph == Flight.PH_RAMP and (flight.launcher_id == "ramp" or flight.launcher_id == "sled")
+	world.rumble = clampf(flight.ramp_speed / maxf(flight.lip_speed, 1.0), 0.25, 1.0) if rumbling else 0.0
+	if rumbling and flight.launcher_id == "sled":
+		_smoke_t -= delta
+		if _smoke_t <= 0.0:
+			_smoke_t = 0.05
+			world.spawn(WorldView.P_DUST, flight.x - 3.0, flight.y - 0.4, -4.0 - rng.randf() * 3.0, rng.randf() * 2.0, 0.7, 0.9, Color(0.8, 0.8, 0.82))
+	var spd := flight.speed() if ph == Flight.PH_AIR else 0.0
+	world.speed_fx = clampf((spd - 30.0) / 60.0, 0.0, 1.0)
+	if spd > 36.0:
+		_wind_t -= delta
+		if _wind_t <= 0.0:
+			_wind_t = 0.05
+			world.spawn(WorldView.P_WIND, flight.x + 4.0 + rng.randf() * 16.0, flight.y + (rng.randf() - 0.5) * 13.0, -spd * 0.25, 0.0, 0.5, 0.5, Color.WHITE)
+	if _dust_left > 0.0:
+		_dust_left -= delta
+		_dust_t -= delta
+		if _dust_t <= 0.0 and flight.altitude() < 6.0:
+			_dust_t = 0.04
+			world.spawn(WorldView.P_DUST, flight.x - 1.5, 0.35, -2.0, 1.0 + rng.randf(), 0.6, 0.7, Color(0.72, 0.62, 0.46))
+	if ph == Flight.PH_SLIDE:
+		_tumble_a += _tumble_w * delta
+		_tumble_w *= maxf(1.0 - 2.4 * delta, 0.0)
+		_hop_y += _hop_v * delta
+		_hop_v -= 30.0 * delta
+		if _hop_y <= 0.0:
+			_hop_y = 0.0
+			if _hop_v < -1.5:
+				_hop_v = -_hop_v * 0.45
+				world.burst(WorldView.P_SCRAP, flight.x, 0.5, 4, 6.0, 0.7, 0.35, Color(0.6, 0.6, 0.62), rng)
+				world.burst(WorldView.P_DUST, flight.x, 0.3, 6, 5.0, 0.7, 0.6, Color(0.7, 0.6, 0.45), rng)
+				_kick = maxf(_kick, 0.35)
+			else:
+				_hop_v = 0.0
+		_dust_t -= delta
+		if _dust_t <= 0.0:
+			_dust_t = 0.045
+			world.spawn(WorldView.P_DUST, flight.x - 1.2, 0.3, -3.0, 1.0 + rng.randf() * 2.0, 0.7, 0.8, Color(0.72, 0.62, 0.46))
+	elif ph != Flight.PH_DONE:
+		_tumble_a = 0.0
+		_hop_y = 0.0
+	world.tumble = _tumble_a
+	world.hop = _hop_y
 
 func _boost_flames() -> void:
 	var c := cos(flight.theta)
