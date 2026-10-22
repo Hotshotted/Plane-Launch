@@ -1,2 +1,4 @@
 # Plane-Launch
-Launch a plane/glider and slowly upgrade to go farther and farther
+Junkyard Launch: launch a junkyard glider and slowly upgrade to go farther and farther.
+
+By **Clear Prop Games**. Style guide: `docs/style.md`. Debug switches on the page URL: `?debug` (build stamp), `?perf`, `?tune`.

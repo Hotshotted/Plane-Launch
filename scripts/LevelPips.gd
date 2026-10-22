@@ -1,11 +1,11 @@
 class_name LevelPips
 extends Control
-## A row of small squares showing an upgrade's level: filled up to `level`, hollow after, out of `max_level`.
+## A row of round dots showing an upgrade's level: filled up to `level`, hollow after, out of `max_level`.
 
 var level := 0
 var max_level := 10
-var fill := Color(0.99, 0.60, 0.12)
-var empty := Color(0.26, 0.29, 0.36)
+var fill := Style.ACCENT
+var empty := Color(Style.INK, 0.55)
 
 func set_level(l: int, m: int) -> void:
 	if l != level or m != max_level:
@@ -15,11 +15,10 @@ func set_level(l: int, m: int) -> void:
 
 func _draw() -> void:
 	var n := maxi(max_level, 1)
-	var gap := 5.0
-	var w := (size.x - gap * (n - 1)) / n
-	var h := minf(size.y, 22.0)
-	var y := (size.y - h) * 0.5
+	var d := minf(size.y, (size.x / n) * 0.8)
+	var step := (size.x - d) / maxf(n - 1, 1)
 	for i in n:
-		var r := Rect2(i * (w + gap), y, w, h)
-		draw_rect(r, fill if i < level else empty)
-		draw_rect(r, Color.BLACK, false, 2.0)
+		var c := Vector2(d * 0.5 + i * step, size.y * 0.5)
+		draw_circle(c, d * 0.5, fill if i < level else empty)
+		if i < level:
+			draw_arc(c, d * 0.5 - 1.0, PI * 1.1, PI * 1.9, 6, Color(1, 1, 1, 0.5), 2.0)

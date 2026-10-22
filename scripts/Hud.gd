@@ -19,26 +19,28 @@ signal daily_pressed
 signal ad_double_pressed
 signal ad_boost_pressed
 
-const HERO := 120
-const BODY := 44
-const SMALL := 28
-const PANEL_H := 900           # height of the launch screen's bottom stack (the world gets the rest)
+const HERO := Style.SZ_XL
+const BODY := Style.SZ_M
+const SMALL := Style.SZ_S
+const PANEL_H := 1000          # height of the launch screen's bottom stack (the world gets the rest)
 const POPUPS := 6
 const MODE_SHOP := 0
 const MODE_FLIGHT := 1
 
 # palette: ink on dark, one accent, gold for scrap, red only for danger
-const C_PANEL := Color(0.09, 0.11, 0.16, 0.97)
-const C_CARD := Color(0.16, 0.19, 0.26)
-const C_TEXT := Color(0.97, 0.97, 1.0)
-const C_MUTED := Color(0.64, 0.70, 0.80)
-const C_ACCENT := Color(0.99, 0.60, 0.12)
-const C_GOLD := Color(1.0, 0.82, 0.28)
-const C_OFF := Color(0.26, 0.29, 0.36)
-const C_DANGER := Color(1.0, 0.36, 0.30)
-const C_PAPER := Color(0.97, 0.94, 0.84)
-const C_INK := Color(0.20, 0.16, 0.10)
-const C_INK_SOFT := Color(0.47, 0.40, 0.30)
+const C_PANEL := Style.SURFACE_DARK
+const C_CARD := Style.SURFACE_DARK_2
+const C_TEXT := Style.TEXT
+const C_MUTED := Style.TEXT_SOFT
+const C_ACCENT := Style.ACCENT          # gold: rewards, highlights
+const C_GO := Style.SUCCESS             # green: the thing to press
+const C_GOLD := Style.ACCENT
+const C_OFF := Style.SURFACE_DARK_2
+const C_DANGER := Style.DANGER
+const C_PAPER := Style.PAPER
+const C_INK := Style.PAPER_INK
+const C_INK_SOFT := Style.PAPER_SOFT
+const C_ON_GO := Color.WHITE
 
 var mode := MODE_SHOP
 
@@ -82,6 +84,7 @@ var _card_pips: Array[LevelPips] = []
 var _card_icons: Array[UpgradeIcon] = []
 var _rusty: Rusty
 var _rusty_says: Label
+var _mission_icons: Array[GlyphView] = []
 var _mission_rows: Array[Label] = []
 var _mission_rewards: Array[Label] = []
 var _mission_counts: Array[Label] = []
@@ -114,6 +117,12 @@ var _sb_accent: StyleBoxFlat
 var _sb_off: StyleBoxFlat
 var _sb_done: StyleBoxFlat
 var _sb_card: StyleBoxFlat
+var _sb_tab: StyleBoxFlat
+var _pressed_of := {}
+var _padded_cache := {}
+var _scrim: ColorRect
+var _top_row: HBoxContainer
+var _stack: VBoxContainer
 
 # ---- results ----
 var _results: Control
@@ -149,8 +158,22 @@ var _perf_extra := ""
 var _aim_key := -1
 var _time := 0.0
 
+# the logo intro: studio logo, then the title; any tap skips it
+static var intro_enabled := true
+const STUDIO_NAME := "Clear Prop\nGames"
+const INTRO_LOGO := 1.3
+const INTRO_TITLE := 2.5
+const INTRO_END := 3.0
+var _intro: Control
+var _intro_logo: Control
+var _intro_mark: GlyphView
+var _intro_title: Control
+var _intro_t := -1.0
+var intro_active := false
+
 func _ready() -> void:
 	layer = 10
+	Style.detect_safe(Vector2(1080, 1920))
 	_make_styles()
 	_build_flight_hud()
 	_build_launch_screen()
@@ -158,38 +181,106 @@ func _ready() -> void:
 	_build_results()
 	_build_splash()
 	_build_ad_screen()
+	_build_intro()
 	move_child(_ad_screen, _splash.get_index())   # the splash stays on top of it during the pre-warm
 	_build_stamp()
+	_apply_safe()
 	set_mode(MODE_SHOP)
+
+## Keep everything out of the notch, rounded corners and home indicator (Style.safe_*): top-anchored pieces move
+## down, bottom-anchored ones up, the launch stack and the sheet in from the sides.
+func _apply_safe() -> void:
+	var st := Style.safe_top
+	var sb := Style.safe_bottom
+	var sl := Style.safe_left
+	var sr := Style.safe_right
+	for c in [_dist, _best, _toast, _scrim, _top_row, _shop_bar["row"], _ad_boost_btn, _bubble, _clip]:
+		c.offset_top += st
+		c.offset_bottom += st
+	for c in [_boost_panel, _boost_pips]:
+		c.offset_top -= sb
+		c.offset_bottom -= sb
+	for c in [_stack, _sheet]:
+		c.offset_bottom -= sb
+		c.offset_left += sl
+		c.offset_right -= sr
+	_sheet.offset_top -= sb
+	_stack.offset_top -= sb
+	for c in [_top_row, _shop_bar["row"], _ad_boost_btn]:
+		c.offset_left += sl
+	for c in [_top_row, _shop_bar["row"]]:
+		c.offset_right -= sr
+	for c in [_bubble, _clip, _boost_panel]:
+		c.offset_right -= sr
+	_boost_pips.offset_right -= sr
+	_boost_pips.offset_left -= sr
+	_boost_panel.offset_left -= sr
+	_bubble.offset_left -= sr
+	_clip.offset_left -= sr
+	_stamp.offset_top -= sb
+	_stamp.offset_left += sl
 
 # ---------------------------------------------------------------------------------------------
 # Building blocks
 # ---------------------------------------------------------------------------------------------
 
 func _make_styles() -> void:
-	_sb_accent = _box(C_ACCENT, Color.BLACK, 18, 4)
-	_sb_off = _box(C_OFF, Color.BLACK, 18, 4)
-	_sb_done = _box(Color(0.12, 0.14, 0.20), C_OFF, 18, 3)
-	_sb_card = _box(C_CARD, Color.BLACK, 18, 3)
+	_sb_accent = _chunky(Style.SUCCESS, Style.SUCCESS_DARK)         # primary: the thing to press
+	_sb_off = _chunky(Style.SURFACE_DARK_2, Style.INK)               # secondary, can't yet
+	_sb_done = _ghost()                                              # ghost: already so
+	_sb_card = _chunky(Style.PRIMARY, Style.PRIMARY_DARK)            # secondary: navigation, tabs
+	_sb_tab = _chunky(Style.SURFACE_DARK_2, Style.INK)
 
-func _box(bg: Color, border: Color = Color.BLACK, radius: int = 18, bw: int = 4) -> StyleBoxFlat:
-	var s := StyleBoxFlat.new()
-	s.bg_color = bg
-	s.border_color = border
-	s.set_border_width_all(bw)
-	s.set_corner_radius_all(radius)
-	s.content_margin_left = 18
-	s.content_margin_right = 18
+## A panel in the shared style: soft shadow, light inner border (Style.box), with this screen's content margins.
+func _box(bg: Color, border: Color = Style.INK, radius: int = Style.R_M, bw: int = 3) -> StyleBoxFlat:
+	var s := Style.box(bg, border, radius, bw)
+	s.content_margin_left = Style.SP_2
+	s.content_margin_right = Style.SP_2
 	s.content_margin_top = 10
 	s.content_margin_bottom = 10
+	return s
+
+## The chunky button: a rounded face over a dark "lip" (the bottom border). Pressing sinks the face onto the lip.
+func _chunky(face: Color, lip: Color, pressed: bool = false) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = face.darkened(0.08) if pressed else face
+	s.border_color = lip
+	s.border_width_bottom = 3 if pressed else int(Style.LIP)
+	s.set_corner_radius_all(Style.R_L)
+	s.anti_aliasing = true
+	s.content_margin_left = Style.SP_2
+	s.content_margin_right = Style.SP_2
+	s.content_margin_top = 6 + (int(Style.LIP) - 3 if pressed else 0)
+	s.content_margin_bottom = 6
+	if not pressed:
+		s.shadow_color = Style.SHADOW_COLOR
+		s.shadow_size = 10
+		s.shadow_offset = Style.SHADOW_OFFSET
+	if not _pressed_of.has(s) and not pressed:
+		_pressed_of[s] = _chunky(face, lip, true)
+	return s
+
+## The ghost button: no fill, a light outline.
+func _ghost() -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = Color(Style.SURFACE_DARK, 0.35)
+	s.border_color = Style.LINE
+	s.set_border_width_all(2)
+	s.set_corner_radius_all(Style.R_L)
+	s.anti_aliasing = true
+	s.content_margin_left = Style.SP_2
+	s.content_margin_right = Style.SP_2
+	s.content_margin_top = 6
+	s.content_margin_bottom = 6
 	return s
 
 func _label(size: int, color: Color = C_TEXT, align: HorizontalAlignment = HORIZONTAL_ALIGNMENT_CENTER, outline: int = 0) -> Label:
 	var l := Label.new()
 	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_override("font", Style.display() if size >= Style.SZ_M else Style.text())
 	l.add_theme_color_override("font_color", color)
 	if outline > 0:
-		l.add_theme_color_override("font_outline_color", Color.BLACK)
+		l.add_theme_color_override("font_outline_color", Style.INK)
 		l.add_theme_constant_override("outline_size", outline)
 	l.horizontal_alignment = align
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -200,8 +291,16 @@ func _full(c: Control) -> void:
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _style_button(b: Button, st: StyleBoxFlat, text_color: Color = C_TEXT) -> void:
-	for sn in ["normal", "hover", "pressed", "disabled", "focus"]:
+	b.set_meta("st", st)
+	b.set_meta("tc", text_color)
+	var down: StyleBoxFlat = _pressed_of.get(st, st)
+	if _icon_shown(b):     # room for the icon beside the centred text
+		var extra: float = (b.get_meta("ico") as GlyphView).custom_minimum_size.x + 14.0
+		st = _padded(st, extra)
+		down = _padded(down, extra)
+	for sn in ["normal", "hover", "disabled", "focus"]:
 		b.add_theme_stylebox_override(sn, st)
+	b.add_theme_stylebox_override("pressed", down)
 	for cn in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color", "font_focus_color"]:
 		b.add_theme_color_override(cn, text_color)
 
@@ -210,6 +309,7 @@ func _button(text: String, size: int, min_h: float, st: StyleBoxFlat, text_color
 	b.text = text
 	b.custom_minimum_size = Vector2(0, min_h)
 	b.add_theme_font_size_override("font_size", size)
+	b.add_theme_font_override("font", Style.display() if size >= Style.SZ_M else Style.text())
 	b.focus_mode = Control.FOCUS_NONE
 	_style_button(b, st, text_color)
 	return b
@@ -219,14 +319,66 @@ func _look(b: Button, kind: int, text: String) -> void:
 	b.text = text
 	match kind:
 		0:
-			_style_button(b, _sb_accent, Color(0.1, 0.07, 0.02))
+			_style_button(b, _sb_accent, C_ON_GO)
 			b.disabled = false
 		1:
-			_style_button(b, _sb_off, C_MUTED)
+			_style_button(b, _sb_off, Style.TEXT_QUIET)
 			b.disabled = false
 		_:
-			_style_button(b, _sb_done, C_MUTED)
+			_style_button(b, _sb_done, Style.TEXT_QUIET)
 			b.disabled = true
+	_place_icon(b)
+
+## `st` with `extra` more left padding (cached).
+func _padded(st: StyleBoxFlat, extra: float) -> StyleBoxFlat:
+	var key := "%d_%d" % [st.get_instance_id(), int(extra)]
+	if not _padded_cache.has(key):
+		var d: StyleBoxFlat = st.duplicate()
+		d.content_margin_left = st.content_margin_left + extra
+		_padded_cache[key] = d
+	return _padded_cache[key]
+
+func _icon_shown(b: Button) -> bool:
+	if not b.has_meta("ico"):
+		return false
+	return b.get_meta("always", false) or (b.text != "" and b.text.unicode_at(0) >= 48 and b.text.unicode_at(0) <= 57)
+
+## A small icon control.
+func _icon(id: String, px: float, col: Color = C_TEXT) -> GlyphView:
+	var g := GlyphView.new()
+	g.custom_minimum_size = Vector2(px, px)
+	g.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	g.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.set_glyph(id, col)
+	return g
+
+## Put an icon just left of a button's centred text (the button's text stays as it is, for tests and screen readers).
+func _attach_icon(b: Button, glyph: String, px: float, col: Color = C_ON_GO) -> GlyphView:
+	var g := _icon(glyph, px, col)
+	g.anchor_left = 0.5
+	g.anchor_right = 0.5
+	g.anchor_top = 0.5
+	g.anchor_bottom = 0.5
+	b.add_child(g)
+	b.set_meta("ico", g)
+	if b.has_meta("st"):
+		_style_button(b, b.get_meta("st"), b.get_meta("tc"))
+	_place_icon(b)
+	return g
+
+func _place_icon(b: Button) -> void:
+	if not b.has_meta("ico"):
+		return
+	var g: GlyphView = b.get_meta("ico")
+	var px := g.custom_minimum_size.x
+	var f: Font = b.get_theme_font("font")
+	var fs := b.get_theme_font_size("font_size")
+	var tw := f.get_string_size(b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x if b.text != "" else 0.0
+	g.offset_left = -tw * 0.5 - px - 14.0 + (px + 14.0) * 0.5
+	g.offset_right = g.offset_left + px
+	g.offset_top = -px * 0.5
+	g.offset_bottom = px * 0.5
+	g.visible = _icon_shown(b)
 
 # ---------------------------------------------------------------------------------------------
 # FLIGHT: distance, best, boost, brief popups
@@ -283,14 +435,14 @@ func _build_flight_hud() -> void:
 	_boost_panel.offset_top = -300
 	_boost_panel.offset_bottom = -70
 	_boost_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_boost_style = _box(C_ACCENT, Color.BLACK, 40, 6)
+	_boost_style = _box(Glyphs.FLAME, Style.INK, Style.R_L, 4)
 	_boost_panel.add_theme_stylebox_override("panel", _boost_style)
-	var bl := _label(BODY, Color(0.1, 0.07, 0.02))
+	var bl := _label(BODY, C_ON_GO)
 	bl.text = "BOOST"
 	bl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_boost_panel.add_child(bl)
 	_flight_root.add_child(_boost_panel)
-	_boost_pips = _label(BODY, C_ACCENT, HORIZONTAL_ALIGNMENT_RIGHT, 8)
+	_boost_pips = _label(BODY, Glyphs.FLAME, HORIZONTAL_ALIGNMENT_RIGHT, 8)
 	_boost_pips.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 	_boost_pips.offset_left = -640
 	_boost_pips.offset_right = -290
@@ -330,7 +482,7 @@ func set_flight(distance: float, charges: int, charges_max: int, boosting: bool,
 		_boost_pips.text = s
 	_boost_panel.visible = charges_max > 0
 	_boost_pips.visible = charges_max > 0
-	_boost_style.bg_color = Color(1.0, 0.85, 0.3) if boosting else (C_ACCENT if charges > 0 else C_OFF)
+	_boost_style.bg_color = Style.ACCENT if boosting else (Glyphs.FLAME if charges > 0 else Style.SURFACE_DARK_2)
 
 func show_hint(on: bool) -> void:
 	_hint.visible = on
@@ -394,7 +546,8 @@ func _build_launch_screen() -> void:
 	add_child(_shop_root)
 	# a quiet top line: scrap, farthest zone, best (on a soft dark strip so it reads over clouds)
 	var scrim := ColorRect.new()
-	scrim.color = Color(0.03, 0.05, 0.1, 0.45)
+	_scrim = scrim
+	scrim.color = Color(Style.SCRIM, 0.5)
 	scrim.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	scrim.offset_bottom = 112
 	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -407,24 +560,29 @@ func _build_launch_screen() -> void:
 	top.offset_bottom = 84
 	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_shop_root.add_child(top)
+	_top_row = top
+	top.add_child(_icon("scrap", 52))
 	_shop_scrap = _label(BODY, C_GOLD, HORIZONTAL_ALIGNMENT_LEFT, 8)
 	_shop_scrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(_shop_scrap)
-	_zone_label = _label(SMALL, C_MUTED, HORIZONTAL_ALIGNMENT_CENTER, 6)
+	top.add_child(_icon("flag", 36))
+	_zone_label = _label(SMALL, C_MUTED, HORIZONTAL_ALIGNMENT_LEFT, 6)
 	_zone_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_zone_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	top.add_child(_zone_label)
+	top.add_child(_icon("trophy", 40))
 	_shop_best = _label(SMALL, C_MUTED, HORIZONTAL_ALIGNMENT_RIGHT, 6)
-	_shop_best.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_shop_best.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	top.add_child(_shop_best)
 	_shop_bar = _make_bar(_shop_root, 92.0)
-	_ad_boost_btn = _button("▶ FREE BOOST", SMALL, 56, _sb_done, C_MUTED)
+	_ad_boost_btn = _button("FREE BOOST", SMALL, 56, _sb_done, C_MUTED)
 	_ad_boost_btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 	_ad_boost_btn.offset_left = 28
 	_ad_boost_btn.offset_right = 330
 	_ad_boost_btn.offset_top = 126
 	_ad_boost_btn.offset_bottom = 182
+	_ad_boost_btn.set_meta("always", true)
+	_attach_icon(_ad_boost_btn, "ad", 30, Style.TEXT_SOFT)
 	_ad_boost_btn.pressed.connect(func(): ad_boost_pressed.emit())
 	_shop_root.add_child(_ad_boost_btn)
 	# the bottom stack: the five upgrade cards (the main thing), the nav, LAUNCH
@@ -437,6 +595,7 @@ func _build_launch_screen() -> void:
 	stack.add_theme_constant_override("separation", 12)
 	stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_shop_root.add_child(stack)
+	_stack = stack
 	_cards_box = VBoxContainer.new()
 	_cards_box.add_theme_constant_override("separation", 8)
 	_cards_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -447,11 +606,15 @@ func _build_launch_screen() -> void:
 	for entry in [["GARAGE", 1], ["STYLE", 3], ["DAILY", 4]]:
 		var nb := _button(entry[0], BODY, 84, _sb_card)
 		nb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nb.set_meta("always", true)
+		_attach_icon(nb, ["garage", "style", "daily"][_nav_buttons.size()], 44, C_ON_GO)
 		nb.pressed.connect(show_tab.bind(entry[1]))
 		nav.add_child(nb)
 		_nav_buttons.append(nb)
-	_launch_btn = _button("LAUNCH!", HERO, 170, _sb_accent, Color(0.1, 0.07, 0.02))
-	_launch_btn.add_theme_font_size_override("font_size", 96)
+	_launch_btn = _button("LAUNCH!", HERO, 170, _sb_accent, C_ON_GO)
+	_launch_btn.add_theme_font_size_override("font_size", HERO)
+	_launch_btn.set_meta("always", true)
+	_attach_icon(_launch_btn, "rocket", 86, C_ON_GO)
 	_launch_btn.pressed.connect(func():
 		close_missions()
 		launch_pressed.emit())
@@ -463,7 +626,7 @@ func _build_mission_bubble() -> void:
 	_bubble = Button.new()
 	_bubble.focus_mode = Control.FOCUS_NONE
 	_bubble.add_theme_font_size_override("font_size", SMALL)
-	var bs := _box(C_PAPER, Color(0.35, 0.25, 0.15), 70, 6)
+	var bs := _box(C_PAPER, Style.RUST_DARK, 70, 5)
 	for sn in ["normal", "hover", "pressed", "focus", "disabled"]:
 		_bubble.add_theme_stylebox_override(sn, bs)
 	_bubble.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
@@ -482,7 +645,7 @@ func _build_mission_bubble() -> void:
 	_rusty.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_bubble.add_child(_rusty)
 	var badge := Panel.new()
-	badge.add_theme_stylebox_override("panel", _box(C_ACCENT, Color.BLACK, 28, 4))
+	badge.add_theme_stylebox_override("panel", _box(Style.DANGER, Style.INK, 28, 3))
 	badge.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	badge.offset_left = -50
 	badge.offset_right = 12
@@ -490,13 +653,13 @@ func _build_mission_bubble() -> void:
 	badge.offset_bottom = 50
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_bubble.add_child(badge)
-	_badge = _label(SMALL, Color(0.1, 0.07, 0.02))
+	_badge = _label(SMALL, C_ON_GO)
 	_full(_badge)
 	_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	badge.add_child(_badge)
 	# the clipboard
 	_clip = PanelContainer.new()
-	var paper := _box(C_PAPER, Color(0.35, 0.25, 0.15), 22, 6)
+	var paper := _box(C_PAPER, Style.RUST_DARK, Style.R_M, 5)
 	paper.content_margin_top = 14
 	paper.content_margin_bottom = 16
 	_clip.add_theme_stylebox_override("panel", paper)
@@ -522,16 +685,20 @@ func _build_mission_bubble() -> void:
 		mv.add_theme_constant_override("separation", 2)
 		cv.add_child(mv)
 		var line := HBoxContainer.new()
+		line.add_theme_constant_override("separation", 12)
 		mv.add_child(line)
-		var desc := _label(BODY, C_INK, HORIZONTAL_ALIGNMENT_LEFT)
+		var mic := _icon("bounce", 44, C_INK)
+		line.add_child(mic)
+		_mission_icons.append(mic)
+		var desc := _label(SMALL, C_INK, HORIZONTAL_ALIGNMENT_LEFT)
 		desc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		desc.clip_text = true
 		line.add_child(desc)
-		var tag := _label(SMALL, C_ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
+		var tag := _label(SMALL, Style.RUST, HORIZONTAL_ALIGNMENT_RIGHT)
 		tag.text = "NEW"
 		tag.visible = false
 		line.add_child(tag)
-		var reward := _label(BODY, Color(0.62, 0.44, 0.04), HORIZONTAL_ALIGNMENT_RIGHT)
+		var reward := _label(BODY, Style.ACCENT_DARK, HORIZONTAL_ALIGNMENT_RIGHT)
 		reward.custom_minimum_size = Vector2(130, 0)
 		line.add_child(reward)
 		var barline := HBoxContainer.new()
@@ -543,7 +710,7 @@ func _build_mission_bubble() -> void:
 		bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var bg := ColorRect.new()
-		bg.color = Color(0.82, 0.77, 0.64)
+		bg.color = Style.PAPER.darkened(0.14)
 		_full(bg)
 		bar.add_child(bg)
 		var fill := ColorRect.new()
@@ -623,7 +790,7 @@ func _make_bar(parent: Control, top: float) -> Dictionary:
 		seg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		seg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var edge := ColorRect.new()
-		edge.color = Color.BLACK
+		edge.color = Style.INK
 		_full(edge)
 		seg.add_child(edge)
 		var bg := ColorRect.new()
@@ -648,7 +815,7 @@ func _make_bar(parent: Control, top: float) -> Dictionary:
 		seg.add_child(fill)
 		row.add_child(seg)
 		fills.append(fill)
-	return {"fills": fills}
+	return {"fills": fills, "row": row}
 
 ## Zones up to `reached` are filled, the next one fills with `progress` (0..1).
 func _set_bar(bar: Dictionary, reached: int, progress: float) -> void:
@@ -684,7 +851,7 @@ func _build_sheet() -> void:
 	_sheet.offset_right = -24
 	_sheet.offset_bottom = -24 - 170 - 4
 	_sheet.offset_top = -24 - 170 - 4 - 810
-	_sheet.add_theme_stylebox_override("panel", _box(Color(0.09, 0.11, 0.16, 1.0), Color.BLACK, 30, 6))
+	_sheet.add_theme_stylebox_override("panel", _box(Style.SURFACE_DARK, Style.LINE, Style.R_L, 3))
 	_sheet.visible = false
 	_shop_root.add_child(_sheet)
 	var col := VBoxContainer.new()
@@ -696,7 +863,7 @@ func _build_sheet() -> void:
 	_sheet_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_sheet_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	head.add_child(_sheet_title)
-	var close := _button("CLOSE", SMALL, 64, _sb_card)
+	var close := _button("CLOSE", SMALL, 64, _sb_tab)
 	close.custom_minimum_size = Vector2(180, 64)
 	close.pressed.connect(close_sheet)
 	head.add_child(close)
@@ -704,7 +871,7 @@ func _build_sheet() -> void:
 	_sub_tabs.add_theme_constant_override("separation", 10)
 	col.add_child(_sub_tabs)
 	for k in 2:
-		var sb := _button(["FRAMES", "LAUNCHERS"][k], SMALL, 60, _sb_card)
+		var sb := _button(["FRAMES", "LAUNCHERS"][k], SMALL, 60, _sb_tab)
 		sb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sb.pressed.connect(show_tab.bind(k + 1))
 		_sub_tabs.add_child(sb)
@@ -741,7 +908,7 @@ func _build_sheet() -> void:
 	cats.add_theme_constant_override("separation", 10)
 	_tab_pages[3].add_child(cats)
 	for ci in 3:
-		var cb := _button(Cosmetics.KIND_NAMES[Cosmetics.KINDS[ci]], SMALL, 60, _sb_card)
+		var cb := _button(Cosmetics.KIND_NAMES[Cosmetics.KINDS[ci]], SMALL, 60, _sb_tab)
 		cb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		cb.pressed.connect(set_style_cat.bind(ci))
 		cats.add_child(cb)
@@ -759,7 +926,7 @@ func _build_sheet() -> void:
 	_daily_info.custom_minimum_size = Vector2(0, 300)
 	_daily_info.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	dp.add_child(_daily_info)
-	_daily_btn = _button("START DAILY LAUNCH", BODY, 110, _sb_accent, Color(0.1, 0.07, 0.02))
+	_daily_btn = _button("START DAILY LAUNCH", BODY, 110, _sb_accent, C_ON_GO)
 	_daily_btn.pressed.connect(func(): daily_pressed.emit())
 	dp.add_child(_daily_btn)
 	set_style_cat(0)
@@ -769,7 +936,7 @@ func _build_sheet() -> void:
 ## An upgrade card on the main screen: icon, name + level pips, one line of effect, and the cost button.
 func _make_card(id: String) -> Dictionary:
 	var card := PanelContainer.new()
-	var st := _box(C_CARD, Color.BLACK, 20, 4)
+	var st := _box(C_CARD, Style.INK, Style.R_M, 3)
 	st.content_margin_top = 5
 	st.content_margin_bottom = 5
 	card.add_theme_stylebox_override("panel", st)
@@ -777,7 +944,7 @@ func _make_card(id: String) -> Dictionary:
 	h.add_theme_constant_override("separation", 16)
 	card.add_child(h)
 	var icon := UpgradeIcon.new()
-	icon.custom_minimum_size = Vector2(76, 76)
+	icon.custom_minimum_size = Vector2(88, 88)
 	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	icon.set_kind(id)
@@ -794,16 +961,17 @@ func _make_card(id: String) -> Dictionary:
 	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(nm)
 	var pips := LevelPips.new()
-	pips.custom_minimum_size = Vector2(190, 24)
+	pips.custom_minimum_size = Vector2(230, 24)
 	pips.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	pips.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top.add_child(pips)
 	var ef := _label(SMALL, C_MUTED, HORIZONTAL_ALIGNMENT_LEFT)
 	ef.clip_text = true
 	v.add_child(ef)
-	var b := _button("", BODY, 74, _sb_accent, Color(0.1, 0.07, 0.02))
-	b.custom_minimum_size = Vector2(220, 74)
+	var b := _button("", BODY, 84, _sb_accent, C_ON_GO)
+	b.custom_minimum_size = Vector2(250, 84)
 	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_attach_icon(b, "scrap", 40, Style.ACCENT)
 	h.add_child(b)
 	_cards_box.add_child(card)
 	_card_panels.append(card)
@@ -815,13 +983,18 @@ func _make_card(id: String) -> Dictionary:
 ## One sheet row: a name, a quiet one-line description, and a button on the right.
 func _make_row(page: Control) -> Dictionary:
 	var row := PanelContainer.new()
-	var rs := _box(C_CARD, Color.BLACK, 16, 3)
+	var rs := _box(C_CARD, Style.INK, Style.R_M, 3)
 	rs.content_margin_top = 6
 	rs.content_margin_bottom = 6
 	row.add_theme_stylebox_override("panel", rs)
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 14)
 	row.add_child(h)
+	var ic := UpgradeIcon.new()
+	ic.custom_minimum_size = Vector2(76, 76)
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_child(ic)
 	var v := VBoxContainer.new()
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -833,11 +1006,12 @@ func _make_row(page: Control) -> Dictionary:
 	ef.clip_text = true
 	v.add_child(nm)
 	v.add_child(ef)
-	var b := _button("", BODY, 78, _sb_accent, Color(0.1, 0.07, 0.02))
+	var b := _button("", BODY, 78, _sb_accent, C_ON_GO)
 	b.custom_minimum_size = Vector2(250, 78)
+	_attach_icon(b, "scrap", 40, Style.ACCENT)
 	h.add_child(b)
 	page.add_child(row)
-	return {"name": nm, "eff": ef, "btn": b}
+	return {"name": nm, "eff": ef, "btn": b, "icon": ic}
 
 func show_tab(i: int) -> void:
 	_tab = i
@@ -852,7 +1026,7 @@ func show_tab(i: int) -> void:
 	_sub_tabs.visible = i == 1 or i == 2
 	for k in _sub_buttons.size():
 		var on := (k + 1) == i
-		_style_button(_sub_buttons[k], _sb_accent if on else _sb_card, Color(0.1, 0.07, 0.02) if on else C_TEXT)
+		_style_button(_sub_buttons[k], _sb_accent if on else _sb_tab, C_ON_GO if on else C_TEXT)
 
 func close_sheet() -> void:
 	_sheet.visible = false
@@ -861,7 +1035,7 @@ func set_style_cat(i: int) -> void:
 	_style_cat = i
 	for k in _style_cat_buttons.size():
 		var on := k == i
-		_style_button(_style_cat_buttons[k], _sb_accent if on else _sb_card, Color(0.1, 0.07, 0.02) if on else C_TEXT)
+		_style_button(_style_cat_buttons[k], _sb_accent if on else _sb_tab, C_ON_GO if on else C_TEXT)
 	_refresh_style()
 
 func _on_style_row(k: int) -> void:
@@ -875,6 +1049,7 @@ func _refresh_style() -> void:
 		var r: Dictionary = _style_rows[k]
 		var d: Dictionary = list[k]
 		var on: bool = Save.equipped(kind) == d["id"]
+		r["icon"].set_glyph(kind if kind == "paint" else ("hat_" + d["id"] if kind == "hat" and d["id"] != "none" else ("trail_" + d["id"] if kind == "trail" and d["id"] != "none" else "close")), Style.TEXT, d.get("color", Color(0, 0, 0, 0)) if kind == "paint" else Color(0, 0, 0, 0))
 		r["name"].text = d["name"] + ("   ✓" if on else "")
 		r["eff"].text = "Whiskers' hat" if kind == "hat" else ("Paint job" if kind == "paint" else "Trail")
 		if on:
@@ -895,7 +1070,7 @@ func _build_results() -> void:
 	_results.visible = false
 	_shop_root.add_child(_results)
 	var dim := ColorRect.new()
-	dim.color = Color(0.02, 0.03, 0.06, 0.84)
+	dim.color = Color(Style.SCRIM, 0.86)
 	_full(dim)
 	_results.add_child(dim)
 	var card := PanelContainer.new()
@@ -903,7 +1078,7 @@ func _build_results() -> void:
 	card.offset_left = -470
 	card.offset_right = 470
 	card.grow_vertical = Control.GROW_DIRECTION_BOTH
-	card.add_theme_stylebox_override("panel", _box(C_PANEL, Color.BLACK, 36, 6))
+	card.add_theme_stylebox_override("panel", _box(C_PANEL, Style.LINE, Style.R_L, 3))
 	_results.add_child(card)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
@@ -950,10 +1125,12 @@ func _build_results() -> void:
 	_res_rusty.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_res_rusty.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	rr.add_child(_res_rusty)
-	_ad_double_btn = _button("▶ DOUBLE SCRAP", SMALL, 64, _sb_done, C_MUTED)
+	_ad_double_btn = _button("DOUBLE SCRAP", SMALL, 64, _sb_done, C_MUTED)
+	_ad_double_btn.set_meta("always", true)
+	_attach_icon(_ad_double_btn, "ad", 30, Style.TEXT_SOFT)
 	_ad_double_btn.pressed.connect(func(): ad_double_pressed.emit())
 	v.add_child(_ad_double_btn)
-	_res_continue = _button("CONTINUE", BODY, 140, _sb_accent, Color(0.1, 0.07, 0.02))
+	_res_continue = _button("CONTINUE", BODY, 140, _sb_accent, C_ON_GO)
 	_res_continue.pressed.connect(func(): show_results(false))
 	v.add_child(_res_continue)
 
@@ -1035,9 +1212,9 @@ func refresh_shop(last: Dictionary, boost_ready: bool = false) -> void:
 		_card_icons[i].set_kind(icon_kind)
 		_card_pips[i].set_level(lv, int(u["max"]))
 		var can := Save.can_buy(id)
-		_card_styles[i].border_color = C_ACCENT if can else Color.BLACK
-		_card_styles[i].bg_color = C_CARD.lerp(C_ACCENT, 0.12) if can else C_CARD
-		_card_styles[i].set_border_width_all(5 if can else 3)
+		_card_styles[i].border_color = C_ACCENT if can else Style.INK
+		_card_styles[i].bg_color = C_CARD.lerp(C_ACCENT, 0.10) if can else C_CARD
+		_card_styles[i].set_border_width_all(4 if can else 3)
 		if Save.is_maxed(id):
 			_look(_row_btn[i], 2, "MAX")
 		elif can:
@@ -1047,6 +1224,7 @@ func refresh_shop(last: Dictionary, boost_ready: bool = false) -> void:
 	for i in Tuning.frames.size():
 		var fd: Dictionary = Tuning.frames[i]
 		var fr: Dictionary = _frame_rows[i]
+		fr["icon"].set_kind(fd["id"])
 		fr["name"].text = fd["name"] + ("   ✓" if Save.frame == fd["id"] else "")
 		fr["eff"].text = fd["desc"]
 		if Save.frame == fd["id"]:
@@ -1058,6 +1236,7 @@ func refresh_shop(last: Dictionary, boost_ready: bool = false) -> void:
 	for i in Tuning.launchers.size():
 		var ld: Dictionary = Tuning.launchers[i]
 		var lr: Dictionary = _launcher_rows[i]
+		lr["icon"].set_kind(ld["id"])
 		lr["name"].text = ld["name"] + ("   ✓" if Save.launcher == ld["id"] else "")
 		lr["eff"].text = "%s  (%d m/s)" % [ld["desc"], roundi(Tuning.launcher_speed(ld["id"], Save.level("ramp")))]
 		if Save.launcher == ld["id"]:
@@ -1078,6 +1257,7 @@ func _refresh_missions() -> void:
 	for i in Missions.SLOTS:
 		if i < Save.missions.size():
 			var m: Dictionary = Save.missions[i]
+			_mission_icons[i].set_glyph(m["type"], C_INK)
 			_mission_rows[i].text = Missions.describe(m)
 			_mission_rewards[i].text = "+%s" % Tuning.fmt(m["reward"])
 			_mission_counts[i].text = "best %s" % Missions.progress_text(m, int(m.get("best", 0)))
@@ -1104,10 +1284,12 @@ func _refresh_ads(last: Dictionary, boost_ready: bool) -> void:
 	var can_double: bool = on and not last.is_empty() and last["earned"] > 0 and not last.get("doubled", false)
 	_ad_boost_btn.visible = on
 	_ad_boost_btn.disabled = boost_ready
-	_ad_boost_btn.text = "BOOST READY ✓" if boost_ready else "▶ FREE BOOST"
+	_ad_boost_btn.text = "BOOST READY" if boost_ready else "FREE BOOST"
+	_place_icon(_ad_boost_btn)
 	_ad_double_btn.visible = on and not last.is_empty() and last["earned"] > 0
 	_ad_double_btn.disabled = not can_double
-	_ad_double_btn.text = "▶ DOUBLE SCRAP" if (last.is_empty() or can_double or not on) else "SCRAP DOUBLED ✓"
+	_ad_double_btn.text = "DOUBLE SCRAP" if (last.is_empty() or can_double or not on) else "SCRAP DOUBLED"
+	_place_icon(_ad_double_btn)
 
 # ---------------------------------------------------------------------------------------------
 # Splash, fake ad, stamp
@@ -1119,7 +1301,7 @@ func _build_splash() -> void:
 	_splash.mouse_filter = Control.MOUSE_FILTER_STOP
 	_splash.visible = false
 	var bg := ColorRect.new()
-	bg.color = Color(0.09, 0.11, 0.16, 0.98)
+	bg.color = Color(Style.SURFACE_DARK, 0.99)
 	_full(bg)
 	_splash.add_child(bg)
 	var t := _label(HERO, C_TEXT)
@@ -1127,6 +1309,21 @@ func _build_splash() -> void:
 	t.text = "JUNKYARD\nLAUNCH"
 	t.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_splash.add_child(t)
+	var sm := _icon("propeller", 150, Style.TEXT_SOFT)
+	sm.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	sm.offset_left = -75
+	sm.offset_right = 75
+	sm.offset_top = -420
+	sm.offset_bottom = -270
+	_splash.add_child(sm)
+	var sn := _label(SMALL, Style.TEXT_QUIET)
+	sn.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	sn.offset_left = -400
+	sn.offset_right = 400
+	sn.offset_top = 260
+	sn.offset_bottom = 310
+	sn.text = "CLEAR PROP GAMES"
+	_splash.add_child(sn)
 	add_child(_splash)
 
 func _build_ad_screen() -> void:
@@ -1135,7 +1332,7 @@ func _build_ad_screen() -> void:
 	_ad_screen.mouse_filter = Control.MOUSE_FILTER_STOP
 	_ad_screen.visible = false
 	var bg := ColorRect.new()
-	bg.color = Color(0.03, 0.03, 0.06, 0.98)
+	bg.color = Color(Style.SCRIM, 0.98)
 	_full(bg)
 	_ad_screen.add_child(bg)
 	var box := VBoxContainer.new()
@@ -1177,6 +1374,7 @@ func _end_ad() -> void:
 
 func _build_stamp() -> void:
 	_stamp = _label(SMALL, Color(1, 1, 1, 0.5), HORIZONTAL_ALIGNMENT_LEFT, 6)
+	_stamp.visible = DebugFlags.stamp_visible()    # players never see the build stamp
 	_stamp.text = "%s  %s" % [BuildInfo.COMMIT, BuildInfo.TIME]
 	var flags := DebugFlags.summary()
 	if flags != "":
@@ -1219,6 +1417,91 @@ func set_mode(m: int) -> void:
 
 func show_splash(on: bool) -> void:
 	_splash.visible = on
+
+func _build_intro() -> void:
+	_intro = Control.new()
+	_full(_intro)
+	_intro.mouse_filter = Control.MOUSE_FILTER_STOP
+	_intro.visible = false
+	var bg := ColorRect.new()
+	bg.color = Style.SURFACE_DARK
+	_full(bg)
+	_intro.add_child(bg)
+	# the studio logo: the propeller mark over the wordmark (the propeller spins up as it appears)
+	_intro_logo = Control.new()
+	_full(_intro_logo)
+	_intro.add_child(_intro_logo)
+	_intro_mark = _icon("propeller", 300, Style.TEXT)
+	_intro_mark.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_intro_mark.offset_left = -150
+	_intro_mark.offset_right = 150
+	_intro_mark.offset_top = -470
+	_intro_mark.offset_bottom = -170
+	_intro_mark.pivot_offset = Vector2(150, 150)
+	_intro_logo.add_child(_intro_mark)
+	var nm := _label(HERO, C_TEXT)
+	nm.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	nm.offset_left = -500
+	nm.offset_right = 500
+	nm.offset_top = -110
+	nm.offset_bottom = 170
+	nm.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	nm.text = STUDIO_NAME
+	_intro_logo.add_child(nm)
+	# the title
+	_intro_title = Control.new()
+	_full(_intro_title)
+	_intro.add_child(_intro_title)
+	var tl := _label(HERO, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER, 0)
+	tl.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	tl.offset_left = -520
+	tl.offset_right = 520
+	tl.offset_top = -200
+	tl.offset_bottom = 120
+	tl.text = "JUNKYARD\nLAUNCH"
+	tl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_intro_title.add_child(tl)
+	var tg := _label(SMALL, Style.TEXT_SOFT)
+	tg.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	tg.offset_left = -500
+	tg.offset_right = 500
+	tg.offset_top = 150
+	tg.offset_bottom = 200
+	tg.text = "TAP TO SKIP"
+	_intro_title.add_child(tg)
+	add_child(_intro)
+
+## Start the intro (Main calls this when the pre-warm is over). Does nothing when `intro_enabled` is off.
+func play_intro() -> void:
+	if not intro_enabled:
+		return
+	intro_active = true
+	_intro_t = 0.0
+	_intro.visible = true
+	_intro.modulate.a = 1.0
+
+func skip_intro() -> void:
+	if intro_active and _intro_t < INTRO_TITLE:
+		_intro_t = INTRO_TITLE
+
+func _animate_intro(delta: float) -> void:
+	_intro_t += delta
+	var t := _intro_t
+	# logo pops in (0..0.45), holds, hands over to the title (1.3..1.7), title holds, everything fades (2.5..3.0)
+	var lp := Style.ease_out_back(t / 0.45)
+	_intro_mark.rot = (1.0 - Style.ease_out_cubic(t / 1.1)) * TAU * 1.5
+	_intro_mark.queue_redraw()
+	_intro_logo.pivot_offset = _intro_logo.size * 0.5
+	_intro_logo.scale = Vector2.ONE * lerpf(0.7, 1.0, lp)
+	_intro_logo.modulate.a = clampf(t / 0.3, 0.0, 1.0) * (1.0 - clampf((t - INTRO_LOGO) / 0.4, 0.0, 1.0))
+	var tp := clampf((t - INTRO_LOGO) / 0.4, 0.0, 1.0)
+	_intro_title.pivot_offset = _intro_title.size * 0.5
+	_intro_title.scale = Vector2.ONE * lerpf(0.85, 1.0, Style.ease_out_back(tp))
+	_intro_title.modulate.a = tp
+	_intro.modulate.a = 1.0 - Style.ease_in_cubic(clampf((t - INTRO_TITLE) / (INTRO_END - INTRO_TITLE), 0.0, 1.0))
+	if t >= INTRO_END:
+		intro_active = false
+		_intro.visible = false
 
 ## Pre-warm: draw every part of the UI at once (under the splash) so fonts and styles are set up.
 func prewarm_show(on: bool) -> void:
@@ -1268,6 +1551,8 @@ func prewarm_show(on: bool) -> void:
 
 func _process(delta: float) -> void:
 	_time += delta
+	if intro_active:
+		_animate_intro(delta)
 	_animate_clip(delta)
 	if ad_active:
 		_ad_left -= delta

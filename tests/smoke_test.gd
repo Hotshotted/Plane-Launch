@@ -128,6 +128,8 @@ func fly_main(main: Node, max_seconds: float = 120.0) -> float:
 	return t
 
 func _initialize() -> void:
+	var HudIntro: GDScript = load("res://scripts/Hud.gd")
+	HudIntro.intro_enabled = false
 	tn = root.get_node("Tuning")
 	sv = root.get_node("Save")
 	FlightS = load("res://scripts/Flight.gd")
@@ -930,7 +932,7 @@ func _initialize() -> void:
 	var biggest_other := 0.0
 	for b in [main.hud._nav_buttons[0], main.hud._nav_buttons[1], main.hud._nav_buttons[2], main.hud._ad_boost_btn, main.hud._row_btn[0]]:
 		biggest_other = maxf(biggest_other, b.custom_minimum_size.y)
-	check(main.hud._launch_btn.custom_minimum_size.y > biggest_other * 1.8 and main.hud._launch_btn.get_theme_font_size("font_size") > 80 and main.hud._launch_btn.get_theme_font_size("font_size") > HudS.BODY * 2, "launch screen: LAUNCH stays the biggest control (%.0f px, font %d)" % [main.hud._launch_btn.custom_minimum_size.y, main.hud._launch_btn.get_theme_font_size("font_size")])
+	check(main.hud._launch_btn.custom_minimum_size.y > biggest_other * 1.8 and main.hud._launch_btn.get_theme_font_size("font_size") > 80 and main.hud._launch_btn.get_theme_font_size("font_size") > HudS.BODY * 1.5, "launch screen: LAUNCH stays the biggest control (%.0f px, font %d)" % [main.hud._launch_btn.custom_minimum_size.y, main.hud._launch_btn.get_theme_font_size("font_size")])
 	check(not main.hud._sheet.visible and not main.hud.results_visible(), "launch screen: garage, style and daily stay behind small nav buttons")
 	check(main.hud._nav_buttons.size() == 3 and main.hud._nav_buttons[0].text == "GARAGE" and main.hud._nav_buttons[1].text == "STYLE" and main.hud._nav_buttons[2].text == "DAILY", "launch screen: GARAGE, STYLE and DAILY are the small nav buttons")
 	# --- the five upgrade cards sit on the main screen: icon, name, level pips, one line of effect, cost
@@ -1176,6 +1178,61 @@ func _initialize() -> void:
 	sv.reset_all()
 	main._to_shop()
 
+	print("5b. shared style: tokens, icons, buttons, safe areas, intro")
+	var StyleS: GDScript = load("res://scripts/Style.gd")
+	var GlyphsS: GDScript = load("res://scripts/Glyphs.gd")
+	check(StyleS.SZ_XL == 110 and StyleS.SZ_M == 56 and StyleS.SZ_S == 30 and HudS.HERO == 110 and HudS.BODY == 56 and HudS.SMALL == 30, "the three text sizes are the shared Style sizes")
+	check(StyleS.display() != null and StyleS.text() != null and StyleS.display().get_string_size("1234 m", HORIZONTAL_ALIGNMENT_LEFT, -1, 56).x > 50.0, "the shared fonts (Fredoka, Nunito) load and measure text")
+	var icon_host := Control.new()
+	main.add_child(icon_host)
+	var missing := 0
+	for gid in GlyphsS.ALL:
+		var gv := GlyphView.new()
+		gv.size = Vector2(64, 64)
+		gv.set_glyph(gid)
+		icon_host.add_child(gv)
+	await process_frame
+	check(GlyphsS.ALL.size() >= 50 and icon_host.get_child_count() == GlyphsS.ALL.size(), "the icon set draws every glyph (%d)" % GlyphsS.ALL.size())
+	icon_host.queue_free()
+	var need_icons: Array[String] = []
+	for u in tn.upgrades:
+		need_icons.append(u["id"])
+	for fd5 in tn.frames:
+		need_icons.append(fd5["id"])
+	for ld5 in tn.launchers:
+		need_icons.append(ld5["id"])
+	for hd5 in Cosmetics.hats:
+		if hd5["id"] != "none":
+			need_icons.append("hat_" + hd5["id"])
+	for td5 in Cosmetics.trails:
+		if td5["id"] != "none":
+			need_icons.append("trail_" + td5["id"])
+	for mt5 in MissionsS.TYPES:
+		need_icons.append(mt5)
+	var not_in_set: Array[String] = []
+	for gid in need_icons:
+		if not GlyphsS.ALL.has(gid):
+			not_in_set.append(gid)
+	check(not_in_set.is_empty(), "every upgrade, frame, launcher, hat, trail and mission has an icon (missing: %s)" % str(not_in_set))
+	check(main.hud._launch_btn.get_theme_stylebox("normal").bg_color == StyleS.SUCCESS and main.hud._launch_btn.get_theme_stylebox("pressed") != main.hud._launch_btn.get_theme_stylebox("normal"), "LAUNCH is the primary button: green with a lip, and a distinct pressed look")
+	# safe areas: a second HUD built with insets keeps everything inside them
+	StyleS.set_safe(120.0, 90.0, 0.0, 0.0)
+	var safe_hud: Node = HudS.new()
+	main.add_child(safe_hud)
+	check(safe_hud._dist.offset_top >= 120.0 and safe_hud._top_row.offset_top >= 120.0 and safe_hud._stack.offset_bottom <= -90.0, "safe areas: top pieces sit below the notch, the launch stack above the home indicator")
+	safe_hud.queue_free()
+	StyleS.set_safe(0.0, 0.0, 0.0, 0.0)
+	# the logo intro: studio name then the title, any tap skips it
+	HudS.intro_enabled = true
+	main.hud.play_intro()
+	check(main.hud.intro_active and main.hud._intro.visible, "the logo intro plays when enabled")
+	touch(main, Vector2(500, 900), true)
+	touch(main, Vector2(500, 900), false)
+	for k in 200:
+		main.hud._process(0.016)
+	check(not main.hud.intro_active and not main.hud._intro.visible, "a tap skips the intro, and it ends by itself")
+	HudS.intro_enabled = false
+
 	print("6. save file")
 	sv.reset_all()
 	sv.add_scrap(321.0)
@@ -1238,6 +1295,17 @@ func _initialize() -> void:
 	check(DebugFlags.perf and DebugFlags.tune and DebugFlags.noprewarm and DebugFlags.summary().contains("?bogus") and not DebugFlags.summary().contains("v"), "?perf ?tune ?noprewarm parse, ?v= is ignored, typos are listed")
 	DebugFlags.parse([])
 	check(DebugFlags.summary() == "" and DebugFlags.prewarm_enabled(), "no flags, no summary")
+	check(not DebugFlags.stamp_visible(), "players never see the build stamp")
+	DebugFlags.parse(["debug"])
+	check(DebugFlags.stamp_visible(), "?debug shows the build stamp")
+	DebugFlags.parse(["tune"])
+	check(DebugFlags.stamp_visible(), "?tune shows the build stamp")
+	DebugFlags.parse([])
+	var plain_hud: Node = HudS.new()
+	main.add_child(plain_hud)
+	check(not plain_hud._stamp.visible and main.hud._stamp.visible, "the HUD's stamp is hidden by default and shown with ?tune")
+	plain_hud.queue_free()
+	check(HudS.STUDIO_NAME.replace("\n", " ") == "Clear Prop Games", "the studio name is Clear Prop Games")
 
 	var fd := DirAccess.open("user://")
 	if fd != null:

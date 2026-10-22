@@ -82,6 +82,7 @@ jobs:
           echo "$SHORT" > build/web/version.txt
           sed "s/__BUILD__/$SHORT/" web/cache_bust.snippet.html > build/cache_bust.html
           sed -i '/<head>/r build/cache_bust.html' build/web/index.html
+          cp assets/fonts/Fredoka.ttf build/web/Fredoka.ttf
           grep -c "version.txt" build/web/index.html
           ls -la build/web
 

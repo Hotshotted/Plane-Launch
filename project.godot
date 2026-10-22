@@ -4,9 +4,12 @@ config_version=5
 [application]
 
 config/name="Junkyard Launch"
+config/description="Junkyard Launch by Clear Prop Games: an incremental glide-distance game."
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.5", "GL Compatibility")
 config/icon="res://icon.svg"
+boot_splash/show_image=false
+boot_splash/bg_color=Color(0.078, 0.129, 0.239, 1)
 
 [autoload]
 
@@ -29,3 +32,4 @@ pointing/emulate_touch_from_mouse=true
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.078, 0.129, 0.239, 1)

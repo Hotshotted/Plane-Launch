@@ -5,6 +5,7 @@ extends RefCounted
 ##   ?noprewarm     skip the start-up pre-warm and splash
 ##   ?perf          show a worst-frame-time readout (and a log of every frame over 50 ms)
 ##   ?tune          show the on-screen tuning panel (TUNE button, top-right)
+##   ?debug         show the build stamp (also shown with ?tune or ?perf); players never see it
 ## Combine with "&", e.g.  ?perf&tune
 ## The active flags are printed under the build stamp.
 
@@ -13,6 +14,7 @@ static var _bad: Array[String] = []    # unknown names (typos), shown in the sum
 static var noprewarm := false
 static var perf := false
 static var tune := false
+static var debug := false
 
 static func prewarm_enabled() -> bool:
 	_load()
@@ -21,6 +23,11 @@ static func prewarm_enabled() -> bool:
 static func perf_enabled() -> bool:
 	_load()
 	return perf
+
+## The build stamp is for us, not for players: only with ?debug, ?tune or ?perf.
+static func stamp_visible() -> bool:
+	_load()
+	return debug or tune or perf
 
 static func tune_enabled() -> bool:
 	_load()
@@ -36,6 +43,8 @@ static func summary() -> String:
 		parts.append("perf")
 	if tune:
 		parts.append("tune")
+	if debug:
+		parts.append("debug")
 	for b in _bad:
 		parts.append("?" + b)
 	return " ".join(parts)
@@ -60,6 +69,7 @@ static func parse(args: Array[String]) -> void:
 	noprewarm = false
 	perf = false
 	tune = false
+	debug = false
 	for a in args:
 		var kv := a.split("=", true, 1)
 		var key := kv[0].uri_decode().to_lower()
@@ -70,6 +80,8 @@ static func parse(args: Array[String]) -> void:
 				perf = true
 			"tune":
 				tune = true
+			"debug":
+				debug = true
 			"v":
 				pass  # cache-busting parameter added by the page, not a flag
 			_:

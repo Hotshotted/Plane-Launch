@@ -173,6 +173,7 @@ func _prewarm() -> void:
 		tune_panel.set_available(true)
 	_warming = false
 	_to_shop(false)
+	hud.play_intro()
 
 # ---------------------------------------------------------------------------------------------
 # State changes
@@ -367,6 +368,10 @@ func _on_tuning_changed(_property: String) -> void:
 # ---------------------------------------------------------------------------------------------
 
 func _input(event: InputEvent) -> void:
+	if hud.intro_active:   # the logo intro: a tap skips it and is not a game touch
+		if (event is InputEventScreenTouch and event.pressed) or (event is InputEventMouseButton and event.pressed):
+			hud.skip_intro()
+		return
 	if event is InputEventScreenTouch:
 		_touch_seen = true
 		var i: int = event.index
