@@ -92,13 +92,38 @@ arrivals, ease-in-cubic for exits, ease-out-back for things that land. Anything 
 
 ## Audio
 
-All procedural (`scripts/Sfx.gd`, no audio files), on two buses: **SFX** and **Music**, with their volumes in the pause menu (saved). Short, soft and rounded.
+**Direction: soft, satisfying and musical, in the spirit of Mini Metro and Alto's Adventure: calm, rounded, cozy.** Every game from this studio sounds like it belongs to the same room (this is Pattern Control's audio direction).
 
-* **UI:** a soft click when a finger goes down (`press`), a bright blip going forward (`tap`), a falling pair going back (`back`), a rising ping for a purchase (`buy`), a metal `clank` when a part bolts on, a `stamp` on paper, `tick`s while the distance counts up, a small fanfare for a new best (`best`).
-* **World:** scrap `clink`s (pitch varies), pads `boing`, birds `squawk`, fans whoosh (`fan`), the booster roars (`boost`), water `splash`es, the landing `crunch`es, a stall buzzes.
-* **Launchers:** the ramp and sled rumble (a loop that stops at the lip), the slingshot `snap`s, the catapult `swing`s, the sled `ignite`s.
-* **Wind:** a loop whose volume and pitch rise with speed; silent when paused.
-* **Music:** a calm layer for the garage; flight adds a driving layer. Layers glide between levels (at most 40 dB a second), never cut, so garage to flight to garage is one continuous mix.
+* **Waveforms:** sines (with a touch of triangle for the muted thuds) and gently filtered noise. No square, no saw, no harsh noise; everything is low-passed, almost nothing above 4 kHz.
+* **Envelopes:** every sound has a soft raised-cosine attack (4 to 12 ms for UI, up to 0.25 s for pads), a natural exponential decay and a smooth release. Nothing starts or stops hard: no clicks.
+* **Space:** a short shared "room" (four damped combs) is baked into every chime, plink and fanfare and into the music's arpeggio.
+* **One key:** C major pentatonic (C D E G A), the key of the music (chords C, Am, F, G). All pitched sounds come from it (`SfxSynth.note_hz(degree)`), so anything that overlaps harmonises. The music is never pitch-shifted. Repeated sounds get about +-3% random pitch and a hair of random level.
+* **On the beat:** scrap plinks wait for the next sixteenth of the music (at most 0.19 s) and a streak climbs the scale one step per pickup, so collecting scrap plays a little melody in time with the music.
+* **Mix:** peak by role: UI 0.08 (the quietest), gameplay 0.15, big moments (landing, new best, new zone, ignition) 0.20. The music's calm layer sits above all of them at its garage level, so **no gameplay sound is ever louder than the music** (the smoke test checks the files; the CI check checks the recording). Wind and rumble are quiet beds under the music. Level changes always glide (at most 60 dB a second).
+* **Rendering:** nothing is synthesised on the phone. `scripts/SfxSynth.gd` is the recipe and `tools/render_audio.gd` bakes it into 44.1 kHz 16-bit mono WAVs: one-shots in `assets/audio/`, loops (`calm`, `hot`, `wind`, `rumble`) in `assets/audio/loops/`. They are committed; re-run `godot --headless --path . --script tools/render_audio.gd` after editing the recipe (the smoke test fails if they differ). One-shots play from a pool of 8 players, always taking a free one so a sound that is still ringing is never cut off.
+* **Buses:** `SFX` and `Music`, and a hard limiter (ceiling -1 dB) on Master, all come from `default_bus_layout.tres`. No bus is ever created at run time (that silences the single-threaded web export).
+* **Loops on the web:** Godot's web samples loop by restarting a buffer from the main thread, which leaves a gap at every wrap when a phone is busy. So the loading page (`PWAudio` in `web/shell.html`) plays the loops itself as native `AudioBufferSource` loops (gapless, off the main thread, phase-locked, through a limiter); the game only sends each layer's level and the wind's rate. The loops ship beside the page, not in the pck.
+* **First tap and background:** browsers keep audio suspended until a tap, so the page resumes every `AudioContext` on the first tap. When the page is hidden, the phone is locked or the tab loses focus (`visibilitychange`, `pagehide`, `blur`) the page suspends every `AudioContext`, even before the game has loaded, and the game mutes Master and pauses a flight. Sound stays off when the page comes back until the player taps Resume (on the launch screen, any tap).
+* **CI:** `tools/web_audio_check.js` loads the exported build in headless Chrome under a 4x CPU slowdown, taps through the game (first tap, garage music, UI sounds, LAUNCH, a flight, hide, show, Resume, landing and results) and records what reaches the speakers. It fails on silence, clicks, dropouts, repeated buffers, clipping, background leaks, an `AudioContext` still running while hidden, sound that returns without a Resume tap, or any one-shot whose peak is above the music's.
+* **Export:** docs, tests and tools are left out of the export, as are the page-played loops (`assets/audio/loops/*`).
+
+| Moment | Sound |
+|---|---|
+| UI | very quiet, very short soft knocks, each kind a little different (press, tap, back, toggle, pause, whoosh for sheets) |
+| Buying | three rising plinks; when the part lands, a low muffled bell with a knock (clank) |
+| Scrap | a soft bell plink, one scale step higher per pickup in a streak, on the beat |
+| Bounce pad | a rubbery sine gliding up to G with a quick wobble |
+| Updraft fan | air rushing up |
+| Bird | two soft falling coos (E to C, then A to E) |
+| Booster | an engine swell that opens up |
+| Stall | a gentle falling pair (E to C) |
+| Water skip | a bright soft splash |
+| Landing | a deep thud, a low-passed noise burst and a low bell (A2) |
+| Launchers | ramp and sled: a low rumble loop that stops at the lip; slingshot: a plucked sine falling from G5; catapult: low whoosh and thud; sled: a big low swell |
+| Results | soft ticks while the distance counts up, a stamp thud, a five-note melody for a new best |
+| New zone | a five-note rising melody |
+| Wind | filtered air whose level and rate rise with speed |
+| Music | garage: a warm pad with a soft bass; flight adds a plucked pentatonic arpeggio with a very soft pulse; the layers crossfade |
 
 ## App icon, splash, performance
 

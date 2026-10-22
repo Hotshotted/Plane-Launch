@@ -1511,6 +1511,123 @@ func _initialize() -> void:
 	main._to_shop()
 	check(main.sfx.music_mode == "garage" and main.sfx.wind_level == 0.0, "back in the garage: garage music, no wind")
 
+	print("5f. audio pipeline: pre-rendered WAVs, bus layout5f, key, levels, loops, background hold, web page and CI check")
+	var syn5f := SfxSynth.new()
+	var all5f := {}
+	var clips5f: Dictionary = syn5f.clips()
+	var loops5f: Dictionary = syn5f.loops()
+	for k5f in clips5f.keys():
+		all5f["res://assets/audio/%s.wav" % k5f] = clips5f[k5f]
+	for k5f in loops5f.keys():
+		all5f["res://assets/audio/loops/%s.wav" % k5f] = loops5f[k5f]
+	var fmt_bad5f: Array[String] = []
+	var stale5f: Array[String] = []
+	for path5f in all5f.keys():
+		var wb5f := FileAccess.get_file_as_bytes(path5f)
+		if wb5f.size() < 46 or wb5f.decode_u16(20) != 1 or wb5f.decode_u16(22) != 1 or wb5f.decode_u32(24) != 44100 or wb5f.decode_u16(34) != 16:
+			fmt_bad5f.append(path5f)
+			continue
+		var smp5f: PackedFloat32Array = all5f[path5f]
+		if wb5f.size() != 44 + smp5f.size() * 2:
+			stale5f.append(path5f)
+			continue
+		var diff5f := 0
+		for i5f in range(0, smp5f.size(), 97):
+			if absi(wb5f.decode_s16(44 + i5f * 2) - int(clampf(smp5f[i5f], -1.0, 1.0) * 32000.0)) > 2:
+				diff5f += 1
+		if diff5f > 0:
+			stale5f.append(path5f)
+	check(fmt_bad5f.is_empty() and all5f.size() >= 34, "all %d sounds are committed as 44.1 kHz 16-bit mono WAVs %s" % [all5f.size(), str(fmt_bad5f)])
+	check(stale5f.is_empty(), "the committed WAVs are exactly what the synth renders (re-run tools/render_audio.gd): %s" % str(stale5f))
+	# nothing is synthesised on the phone, and no bus is made at run time
+	var sfx_src := FileAccess.get_file_as_string("res://scripts/Sfx.gd")
+	var main_src := FileAccess.get_file_as_string("res://scripts/Main.gd")
+	check(not sfx_src.contains("AudioStreamWAV.new") and not sfx_src.contains("AudioStreamGenerator") and not sfx_src.contains("sin(") and not sfx_src.contains("PackedFloat32Array"), "Sfx.gd synthesises nothing: it only plays the committed files")
+	check(not sfx_src.contains("add_bus") and not main_src.contains("add_bus"), "no audio bus is created at run time")
+	var layout5f := FileAccess.get_file_as_string("res://default_bus_layout.tres")
+	check(layout5f.contains("&\"SFX\"") and layout5f.contains("&\"Music\"") and layout5f.contains("AudioEffectHardLimiter") and ProjectSettings.get_setting("audio/buses/default_bus_layout") == "res://default_bus_layout.tres", "the SFX and Music buses and the Master limiter come from default_bus_layout.tres")
+	check(AudioServer.get_bus_index("SFX") >= 0 and AudioServer.get_bus_index("Music") >= 0, "both buses exist at start-up")
+	# one key: C major pentatonic
+	var key_ok := true
+	for d5f in range(-5, 12):
+		var semis := 12.0 * log(SfxSynth.note_hz(d5f) / SfxSynth.C4) / log(2.0)
+		var pc := int(round(fposmod(semis, 12.0)))
+		if not [0, 2, 4, 7, 9].has(pc) or absf(semis - round(semis)) > 0.001:
+			key_ok = false
+	check(key_ok and absf(SfxSynth.note_hz(5) - 523.25) < 0.1 and absf(SfxSynth.note_hz(4) - 440.0) < 0.1, "every pitched sound is drawn from C major pentatonic (C D E G A)")
+	var synth_src := FileAccess.get_file_as_string("res://scripts/SfxSynth.gd")
+	check(not synth_src.contains("signf(sin") and not synth_src.contains("fposmod(f * t, 1.0) * 2.0"), "no square or saw waves in the sound recipe")
+	# levels: no gameplay sound is louder than the music (peak), UI is the quietest, nothing clips
+	var peak_of5f := func(a: PackedFloat32Array) -> float:
+		var m := 0.0
+		for v in a:
+			m = maxf(m, absf(v))
+		return m
+	var calm_peak: float = peak_of5f.call(loops5f["calm"])
+	var garage_music := calm_peak * db_to_linear(Sfx.GARAGE_CALM_DB)
+	var loudest5f := 0.0
+	var ui_peak := 0.0
+	var loud_name := ""
+	for k5f in clips5f.keys():
+		var pk: float = peak_of5f.call(clips5f[k5f])
+		if pk > loudest5f:
+			loudest5f = pk
+			loud_name = k5f
+		if ["press", "tap", "back", "toggle", "pause", "tick", "error", "whoosh"].has(k5f):
+			ui_peak = maxf(ui_peak, pk)
+	check(loudest5f < garage_music and loudest5f <= 0.2001, "no sound is louder than the garage music (loudest5f %s %.3f, music %.3f)" % [loud_name, loudest5f, garage_music])
+	check(ui_peak <= 0.125 and ui_peak < loudest5f, "UI sounds are the quietest (%.3f)" % ui_peak)
+	# the loops are seamless: no step at the seam or inside, none clip
+	var loop_bad: Array[String] = []
+	for k5f in loops5f.keys():
+		var lp: PackedFloat32Array = loops5f[k5f]
+		var worst := absf(lp[0] - lp[lp.size() - 1])
+		for i5f in range(1, lp.size()):
+			worst = maxf(worst, absf(lp[i5f] - lp[i5f - 1]))
+		if worst > 0.04 or peak_of5f.call(lp) > 0.99:
+			loop_bad.append("%s %.3f" % [k5f, worst])
+	check(loop_bad.is_empty(), "the loops are seamless and do not clip %s" % str(loop_bad))
+	# one-shots pick a free player
+	var sfx5f: Node = main.sfx
+	sfx5f._fire(sfx5f._streams["best"], 1.0)
+	sfx5f._fire(sfx5f._streams["best"], 1.0)
+	var busy5f := 0
+	for p5f in sfx5f._pool:
+		if p5f.playing:
+			busy5f += 1
+	check(busy5f >= 2, "two overlapping one-shots use two players (%d playing): nothing is cut off" % busy5f)
+	# scrap plinks climb the scale and wait for the beat
+	sfx5f._clink_last = -100000
+	sfx5f.play_clink()
+	sfx5f.play_clink()
+	sfx5f.play_clink()
+	check(sfx5f._clink_step == 2, "a streak of scrap plinks climbs the scale (step %d)" % sfx5f._clink_step)
+	# the background hold: mute the Master bus, resume only on release
+	main._background()
+	check(AudioServer.is_bus_mute(0) and main._audio_hold and sfx5f.held, "going to the background mutes the Master bus")
+	main._foreground()
+	check(AudioServer.is_bus_mute(0), "coming back does not bring the sound back by itself")
+	main._release_audio()
+	check(not AudioServer.is_bus_mute(0) and not main._audio_hold, "tapping brings it back")
+	main._to_shop()
+	main.launch()
+	main.frame(1.0 / 60.0, 1.0 / 60.0)
+	main._background()
+	check(main.paused and AudioServer.is_bus_mute(0), "the background pauses a flight in progress and mutes it")
+	main._foreground()
+	main.hud.resume_pressed.emit()
+	check(not main.paused and not AudioServer.is_bus_mute(0), "Resume un-pauses and un-mutes")
+	main._to_shop()
+	# the export leaves out docs, tests, tools and the page-played loops; the page and the CI check are in place
+	var presets5f := FileAccess.get_file_as_string("res://export_presets.cfg")
+	check(presets5f.contains("docs/*") and presets5f.contains("tests/*") and presets5f.contains("tools/*") and presets5f.contains("assets/audio/loops/*"), "the export excludes docs, tests, tools and the page-played loops")
+	var shell5f := FileAccess.get_file_as_string("res://web/shell.html")
+	check(shell5f.contains("PWAudio") and shell5f.contains("visibilitychange") and shell5f.contains("pagehide") and shell5f.contains("blur") and shell5f.contains("createBufferSource") and shell5f.contains("loop = true") and shell5f.contains("__pwRelease"), "the web page plays the loops natively and suspends every AudioContext in the background")
+	var checker5f := FileAccess.get_file_as_string("res://tools/web_audio_check.js")
+	check(checker5f.contains("setCPUThrottlingRate") and checker5f.contains("clicks") and checker5f.contains("dropouts") and checker5f.contains("repeated") and checker5f.contains("clipped") and checker5f.contains("louder than the music") and checker5f.contains("hidden"), "the CI web audio check covers throttling, clicks, dropouts, repeats, clipping, levels and background leaks")
+	var wf5f := FileAccess.get_file_as_string("res://.github/workflows/deploy.yml")
+	check(wf5f.contains("web_audio_check.js") and wf5f.contains("assets/audio/loops"), "CI runs the web audio check and ships the loops beside the page")
+
 	print("6. save file")
 	sv.reset_all()
 	sv.add_scrap(321.0)

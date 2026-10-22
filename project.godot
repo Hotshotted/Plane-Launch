@@ -18,6 +18,10 @@ boot_splash/bg_color=Color(0.078, 0.129, 0.239, 1)
 Tuning="*res://scripts/Tuning.gd"
 Save="*res://scripts/Save.gd"
 
+[audio]
+
+buses/default_bus_layout="res://default_bus_layout.tres"
+
 [display]
 
 window/size/viewport_width=1080

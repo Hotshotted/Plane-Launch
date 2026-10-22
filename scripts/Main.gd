@@ -13,6 +13,10 @@ var world: WorldView
 var hud: Hud
 var sfx: Sfx
 var paused := false             # the pause card is up: the flight is frozen
+var _audio_hold := false        # the page went to the background: sound is held until the player taps Resume
+var _page_hidden := false
+var _poll_t := 0.0
+var _haptic_warmed := false
 var tune_panel: TunePanel
 var rng := RandomNumberGenerator.new()
 
@@ -66,7 +70,6 @@ func _ready() -> void:
 	world = WorldView.new()
 	world.flight = flight
 	add_child(world)
-	Sfx.setup_buses()
 	sfx = Sfx.new()
 	add_child(sfx)
 	Sfx.set_bus_volume("SFX", Save.sfx_vol)
@@ -353,6 +356,7 @@ func set_paused(on: bool) -> void:
 	clear_input()
 	if not on:
 		_skip_frames = Tuning.resume_skip_frames
+		_release_audio()    # the player tapped Resume: sound may run again
 
 func _restart_flight() -> void:
 	set_paused(false)
@@ -450,6 +454,12 @@ func _on_tuning_changed(_property: String) -> void:
 # ---------------------------------------------------------------------------------------------
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch and event.pressed:
+		if not _haptic_warmed:
+			_haptic_warmed = true
+			sfx.unlock()      # browsers only let audio run after a tap
+		if _audio_hold and not paused:
+			_release_audio()  # a tap on the launch screen brings the sound back
 	if hud.intro_active:   # the logo intro: a tap skips it and is not a game touch
 		if (event is InputEventScreenTouch and event.pressed) or (event is InputEventMouseButton and event.pressed):
 			hud.skip_intro()
@@ -545,16 +555,77 @@ func _notification(what: int) -> void:
 			if not _suspended:
 				_suspended = true
 				_note_event("window went to the background")
-				if state == STATE_FLIGHT and not paused:
-					set_paused(true)     # auto-pause on focus loss
+			_background()     # silence, and pause a flight in progress (auto-pause on focus loss)
 		NOTIFICATION_APPLICATION_FOCUS_IN, NOTIFICATION_APPLICATION_RESUMED, NOTIFICATION_WM_WINDOW_FOCUS_IN:
 			if _suspended:
 				_suspended = false
 				_skip_frames = Tuning.resume_skip_frames
 				clear_input()
+				_foreground()
 				_note_event("window came back")
 
+# ---------------------------------------------------------------------------------------------
+# Background audio
+# ---------------------------------------------------------------------------------------------
+
+## The page was hidden, blurred or the phone locked: silence everything and pause a flight in progress. Nothing resumes by
+## itself: the player has to come back and tap Resume (or, on the launch screen, tap anywhere).
+func _background() -> void:
+	_page_hidden = true
+	if not _audio_hold:
+		_audio_hold = true
+		sfx.hold()
+	if state == STATE_FLIGHT and not paused and not _warming:
+		set_paused(true)
+	_publish_state()
+
+func _foreground() -> void:
+	_page_hidden = false
+	_publish_state()
+
+## The player is back and has tapped (Resume, or any tap on the launch screen): sound may run again.
+func _release_audio() -> void:
+	if _page_hidden:
+		return
+	if _audio_hold:
+		_audio_hold = false
+		sfx.release()
+		if OS.has_feature("web"):
+			JavaScriptBridge.eval("window.__pwRelease && window.__pwRelease()")
+	_publish_state()
+
+## Web: the page tells us about visibility too (a hidden tab, a locked phone), and we publish our state (and where the
+## buttons are, in page pixels) for the automated audio check.
+func _poll_page(delta: float) -> void:
+	if not OS.has_feature("web"):
+		return
+	_poll_t += delta
+	if _poll_t < 0.25:
+		return
+	_poll_t = 0.0
+	var hidden := bool(JavaScriptBridge.eval("!!window.__pwHidden"))
+	if hidden and not _page_hidden:
+		_background()
+	elif not hidden and _page_hidden:
+		_foreground()
+	else:
+		_publish_state()
+
+func _css_center(c: Control, sc: float) -> String:
+	var p := c.get_global_rect().get_center() * sc
+	return "[%.1f, %.1f]" % [p.x, p.y]
+
+func _publish_state() -> void:
+	if not OS.has_feature("web"):
+		return
+	var ready_now := not _warming and not hud.intro_active
+	var sc := float(JavaScriptBridge.eval("window.innerWidth")) / get_viewport().get_visible_rect().size.x
+	JavaScriptBridge.eval("window.__pwGameReady = true; window.__pw = {ready: %s, paused: %s, muted: %s, held: %s, launch: %s, pause: %s, resume: %s, garage: %s, close: %s}" % [
+			str(ready_now).to_lower(), str(paused).to_lower(), str(AudioServer.is_bus_mute(0)).to_lower(), str(_audio_hold).to_lower(),
+			_css_center(hud._launch_btn, sc), _css_center(hud._pause_btn, sc), _css_center(hud._resume_btn, sc), _css_center(hud._nav_buttons[0], sc), _css_center(hud._sheet_close, sc)])
+
 func _process(raw_delta: float) -> void:
+	_poll_page(raw_delta)
 	_key_hold = Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_UP)
 	if _warming:
 		return
@@ -693,7 +764,7 @@ func _handle_events() -> void:
 		match flight.ev_kind[k]:
 			Flight.EV_SCRAP:
 				world.burst(WorldView.P_SPARK, ex, ey, 5, 6.0, 0.4, 0.3, Hud.C_GOLD, rng)
-				sfx.play("clink", 0.9 + rng.randf() * 0.35)
+				sfx.play_clink()
 				var scrap_text := "SCRAP! +%d" % flight.ev_val[k] if Save.mark_seen("scrap") else "+%d" % flight.ev_val[k]
 				hud.popup(scrap_text, world.to_screen(ex, ey) + Vector2(0, -50), Hud.C_GOLD, "scrap")
 			Flight.EV_PAD:

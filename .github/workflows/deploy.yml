@@ -83,8 +83,22 @@ jobs:
           sed "s/__BUILD__/$SHORT/" web/cache_bust.snippet.html > build/cache_bust.html
           sed -i '/<head>/r build/cache_bust.html' build/web/index.html
           cp assets/fonts/Fredoka.ttf build/web/Fredoka.ttf
+          mkdir -p build/web/audio && cp assets/audio/loops/*.wav build/web/audio/   # (the page plays the music loops natively)
           grep -c "version.txt" build/web/index.html
+          grep -q "Clear Prop" build/web/index.html
+          ! grep -q '\$GODOT_' build/web/index.html
           ls -la build/web
+
+      # The exported game, loaded in headless Chrome under a 4x CPU slowdown and tapped like a phone: the sound that reaches the
+      # speakers is recorded and checked (silence, clicks, dropouts, repeated buffers, clipping, one-shots louder than the
+      # music) and so is background audio (hidden page: every context suspended, silent, game paused; back only on Resume).
+      - name: Web audio check
+        timeout-minutes: 12
+        run: |
+          CHROME=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)
+          echo "using $CHROME"
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pw" playwright-core
+          NODE_PATH="$RUNNER_TEMP/pw/node_modules" node tools/web_audio_check.js build/web "$CHROME"
 
       - uses: actions/upload-pages-artifact@v3
         with:

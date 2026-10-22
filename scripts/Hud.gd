@@ -382,6 +382,8 @@ var _pause_btn: Button
 var _pause_card: PanelContainer
 var _postcard_flag: GlyphView
 var pause_active := false
+var _resume_btn: Button
+var _sheet_close: Button
 var _warming_ui := false          # during the start-up pre-warm no transitions run
 
 ## Squash on press, bounce on release, a soft click down and a bright blip up, a light buzz.
@@ -1052,6 +1054,7 @@ func _build_sheet() -> void:
 	var close := _button("CLOSE", SMALL, 64, _sb_tab)
 	close.custom_minimum_size = Vector2(180, 64)
 	close.set_meta("snd", "back")
+	_sheet_close = close
 	close.pressed.connect(close_sheet)
 	head.add_child(close)
 	_sub_tabs = HBoxContainer.new()
@@ -1981,6 +1984,7 @@ func _build_pause() -> void:
 	title.text = "PAUSED"
 	v.add_child(title)
 	var resume := _button("RESUME", BODY, 130, _sb_accent, C_ON_GO)
+	_resume_btn = resume
 	resume.set_meta("always", true)
 	_attach_icon(resume, "play", 56, C_ON_GO)
 	resume.pressed.connect(func(): resume_pressed.emit())
