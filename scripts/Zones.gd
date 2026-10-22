@@ -62,6 +62,24 @@ static var list: Array[Dictionary] = [
 		"weights": [3.0, 2.0, 2.0, 2.4, 0.8, 1.0, 0.5], "bird_color": Color(1.0, 0.5, 0.9)},
 ]
 
+## The air in each zone (what flies above the ground), by zone index.
+## balloon skin: 0 hot air balloon, 1 parasailer, 2 party balloons.  flock skin (slows you): 0 geese, 1 seagulls, 2 crows, 3 helicopters,
+## 4 pterodactyls, 5 UFOs.  kite skin (slows you): 0 kite, 1 paper plane, 2 drone.  storm skin: 0 storm cloud, 1 ash cloud, 2 neon cloud.
+## Weights [balloon, kite, flock, weave, ring, stream, blimp, storm, find] are times Tuning's own chances: each zone leans on its own air.
+static var air: Array[Dictionary] = [
+	{"balloon": 0, "flock": 2, "kite": 0, "storm": 0, "w": [1.4, 1.2, 1.0, 1.0, 1.0, 1.0, 0.7, 1.0, 1.0], "flavor": "patched balloons, crows, newspaper kites"},
+	{"balloon": 0, "flock": 0, "kite": 0, "storm": 0, "w": [1.5, 1.2, 1.2, 1.0, 1.0, 1.0, 0.8, 0.9, 1.0], "flavor": "balloons, geese, kites"},
+	{"balloon": 0, "flock": 0, "kite": 0, "storm": 0, "w": [1.2, 1.0, 1.4, 1.1, 1.0, 1.2, 0.8, 1.0, 1.0], "flavor": "geese on the river"},
+	{"balloon": 2, "flock": 2, "kite": 1, "storm": 0, "w": [1.4, 1.3, 1.0, 1.0, 1.0, 1.0, 0.9, 0.9, 1.0], "flavor": "party balloons, crows, paper planes"},
+	{"balloon": 0, "flock": 0, "kite": 0, "storm": 0, "w": [1.3, 1.0, 1.2, 1.1, 1.2, 1.3, 0.8, 1.2, 1.0], "flavor": "balloons, geese, big weather"},
+	{"balloon": 0, "flock": 3, "kite": 2, "storm": 0, "w": [1.0, 1.4, 1.6, 1.0, 1.1, 1.0, 1.4, 0.9, 1.0], "flavor": "helicopters, drones, blimps"},
+	{"balloon": 1, "flock": 1, "kite": 0, "storm": 0, "w": [1.8, 1.2, 1.4, 1.0, 1.0, 1.4, 0.8, 0.8, 1.0], "flavor": "parasailers, seagulls, kites"},
+	{"balloon": 2, "flock": 0, "kite": 1, "storm": 0, "w": [1.5, 1.0, 0.9, 1.1, 1.3, 1.2, 1.0, 0.7, 1.2], "flavor": "party balloons in the clouds"},
+	{"balloon": 2, "flock": 5, "kite": 1, "storm": 0, "w": [1.0, 0.9, 1.4, 1.0, 1.3, 1.0, 1.0, 0.8, 1.6], "flavor": "UFOs and floating cheese balloons"},
+	{"balloon": 0, "flock": 4, "kite": 0, "storm": 1, "w": [1.0, 1.0, 1.6, 1.0, 1.0, 1.0, 0.7, 1.6, 1.2], "flavor": "pterodactyls and ash clouds"},
+	{"balloon": 2, "flock": 5, "kite": 2, "storm": 2, "w": [1.2, 1.1, 1.3, 1.0, 1.5, 1.2, 1.0, 1.3, 1.4], "flavor": "UFOs, drones, neon storms"},
+]
+
 ## Start of zone i in meters, scaled by Tuning's zone_distance_mult (passed in so this file needs no autoload).
 static func start_of(i: int, dist_mult: float) -> float:
 	return float(list[clampi(i, 0, COUNT - 1)]["start"]) * dist_mult

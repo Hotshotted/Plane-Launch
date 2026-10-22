@@ -130,6 +130,22 @@ arrivals, ease-in-cubic for exits, ease-out-back for things that land. Anything 
 * **Icon** (`icon.svg`, rendered to `icons/` by `tools/make_icons.gd`): Whiskers in his top hat in the gold glider leaving a rusty ramp, on the family sky-blue rounded square with the top highlight. **Splash** (`assets/splash.png`): the icon and the studio propeller on the brand navy `#14213d`, the same colour as the web loading page and the boot colour, so there is no seam from the page to the game.
 * **Performance** (`?perf`): the CPU cost of a flight frame (simulation, drawing, UI) is under 9 ms in every zone (headless run through all 11 zones). Under software GL (no GPU) at 540 x 960 frames average 18 to 24 ms, with a handful of single frames up to 37 ms (Hills, Disco Planet, Junkyard) out of 2,000; real devices render far faster. Nothing is created in flight: particles, popups, coins and stars are pooled and pre-warmed.
 
+## The air: altitude bands
+
+Where you fly is a decision. Height above the ground splits the sky into four bands (`Tuning.band_edge_*`: 10, 24, 48 m) and each has its own content and its own scrap multiplier (the chip next to the distance: LOW x1, MID x1.5, HIGH x2, SKY x2.5). The multiplier applies to everything earned as it is earned: distance pay while flying, and every pickup.
+
+| Band | Content | Notes |
+|---|---|---|
+| Low (0-10 m) | bounce tyres, fans, ramps, skimming scrap | the only band with pads; less scrap here |
+| Mid (10-24 m) | hot air balloons (clip the top to bounce up), kites and flocks (slow you), scrap arcs | balloons throw you up toward the next band |
+| High (24-48 m) | boost rings (fly through for a speed burst), tailwind streams (ribbons that push you), blimps (skim the top for a boost), storm clouds (drag you down and slow you) | no pads |
+| Sky (48 m+) | joke finds that pay big: lost satellite, astronaut cat, space duck, cosmic cow | rare, only for big launches (`Flight.reach_alt`) |
+
+* **Weaving:** scrap arcs lead up (or down) from one band into the next and end at its first prize (a ring or a balloon); the generator aims content at where the glider will be about a second from now, so there is always something in reach, and a slow glider gets shorter chunks. The sim measures it (`glide_sim.gd -- bands`): the sky is never empty for more than about two seconds.
+* **Zones** have their own air (`Zones.air`): Coast has parasailers and seagulls, City helicopters and drones, Farmland geese, Hills big weather, Dino Valley pterodactyls and ash clouds, the Moon and Disco Planet UFOs and neon storms.
+* **Missions** use it: fly through rings, bounce off balloons, skim blimps, ride tailwinds, spend time in high air, find a treasure.
+* **Art:** the same storybook shapes with a black outline on everything you can touch; streams are soft ribbons without one. Everything is pooled (`Flight.MAX_THINGS`, fixed arrays) and every skin is drawn in the start-up pre-warm.
+
 ## Studio mark and loading
 
 The studio is **Clear Prop Games**; its mark is a bold three-blade propeller over a gold hub, with the name set in

@@ -58,6 +58,9 @@ static var ARROW_UP := PackedVector2Array([Vector2(0, -0.5), Vector2(0.5, 0.0), 
 static var STAR := PackedVector2Array([Vector2(0, -0.5), Vector2(0.09, -0.09), Vector2(0.5, 0), Vector2(0.09, 0.09), Vector2(0, 0.5), Vector2(-0.09, 0.09), Vector2(-0.5, 0), Vector2(-0.09, -0.09)])
 static var ANVIL := PackedVector2Array([Vector2(-2.0, -0.5), Vector2(1.6, -0.62), Vector2(2.3, -0.1), Vector2(2.0, 0.72), Vector2(-1.9, 0.72), Vector2(-2.2, 0.0)])
 static var CROWN := PackedVector2Array([Vector2(-0.5, 0.3), Vector2(-0.5, -0.3), Vector2(-0.25, 0.0), Vector2(0.0, -0.4), Vector2(0.25, 0.0), Vector2(0.5, -0.3), Vector2(0.5, 0.3)])
+static var ELL12 := PackedVector2Array([Vector2(1, 0), Vector2(0.866, 0.5), Vector2(0.5, 0.866), Vector2(0, 1), Vector2(-0.5, 0.866), Vector2(-0.866, 0.5), Vector2(-1, 0), Vector2(-0.866, -0.5), Vector2(-0.5, -0.866), Vector2(0, -1), Vector2(0.5, -0.866), Vector2(0.866, -0.5)])
+static var PLANE := PackedVector2Array([Vector2(-1.3, 0.05), Vector2(1.0, -0.55), Vector2(0.35, 0.0), Vector2(1.0, 0.5)])
+static var ZAG := PackedVector2Array([Vector2(0.15, -0.5), Vector2(-0.25, 0.0), Vector2(0.0, 0.0), Vector2(-0.2, 0.5), Vector2(0.3, -0.1), Vector2(0.05, -0.1)])
 static var FLAME := PackedVector2Array([Vector2(0, -0.28), Vector2(-1.0, 0.0), Vector2(0, 0.28)])
 
 # set by Main every frame
@@ -75,6 +78,7 @@ var tumble := 0.0       # radians: the crunch-and-tumble after touchdown
 var hop := 0.0          # metres: the glider bouncing along on its belly
 var _outline := true    # scenery is drawn without outlines: only things you can interact with get one
 var _scarf := PackedVector2Array()
+var _rib := PackedVector2Array()
 var _flex := 0.0
 var _rattle := 0.0
 var ambience := false   # the launch screen is alive: Rusty tinkers, a grinder throws sparks, a crow sits on the heap
@@ -130,6 +134,7 @@ func _ready() -> void:
 	_ramp_bot_line.resize(rn)
 	_zig.resize(9)
 	_scarf.resize(6)
+	_rib.resize(14)
 	for i in 10:
 		_pal.append(Color.WHITE)
 	for p in [_px, _py, _pvx, _pvy, _plife, _pmax, _psize]:
@@ -841,7 +846,8 @@ func _draw_things() -> void:
 			continue
 		var wx := f.t_x[i]
 		var sx := _sx(wx)
-		if sx < -150.0 or sx > _size.x + 150.0:
+		var wide := f.t_aux[i] * _ppm if f.t_kind[i] == Flight.K_STREAM else 0.0
+		if sx + wide < -150.0 or sx > _size.x + 150.0:
 			continue
 		var sy := _sy(f.t_y[i])
 		match f.t_kind[i]:
@@ -861,6 +867,249 @@ func _draw_things() -> void:
 				_draw_fan(sx, f.t_y[i], int(Zones.list[f.t_zone[i]]["fan_skin"]), f.t_scale[i])
 			Flight.K_BIRD:
 				_draw_bird(sx, sy, wx, f.t_zone[i], f.t_scale[i])
+			Flight.K_BALLOON:
+				_draw_balloon(sx, sy, wx, f.t_skin[i], f.t_scale[i], f.t_phase[i])
+			Flight.K_KITE:
+				_draw_kite(sx, sy, wx, f.t_skin[i], f.t_scale[i])
+			Flight.K_GOOSE:
+				_draw_flock_member(sx, sy, wx, f.t_skin[i], f.t_scale[i], f.t_zone[i])
+			Flight.K_RING:
+				_draw_ring(sx, sy, wx, f.t_aux[i], f.t_scale[i])
+			Flight.K_STREAM:
+				_draw_stream(sx, sy, f.t_aux[i], f.t_scale[i], wx)
+			Flight.K_BLIMP:
+				_draw_blimp(sx, sy, wx, f.t_skin[i], f.t_scale[i], f.t_phase[i])
+			Flight.K_STORM:
+				_draw_storm(sx, sy, wx, f.t_skin[i], f.t_scale[i])
+			Flight.K_FIND:
+				_draw_find(sx, sy, wx, f.t_skin[i])
+
+# ---------------------------------------------------------------------------------------------
+# The air above the ground (storybook shapes, a black outline on everything you can touch)
+# ---------------------------------------------------------------------------------------------
+
+const BALLOON_COLS := [Color(0.9, 0.3, 0.25), Color(0.25, 0.55, 0.9), Color(0.98, 0.78, 0.2), Color(0.3, 0.75, 0.4), Color(0.85, 0.4, 0.75)]
+
+func _draw_balloon(sx: float, sy: float, wx: float, skin: int, sz: float, squash: float) -> void:
+	var u := _ppm
+	var r := Tuning.balloon_r * sz * u
+	var sq := sin(squash / 0.45 * PI) if squash > 0.0 else 0.0
+	var ca: Color = BALLOON_COLS[int(absf(wx)) % 5]
+	var cb: Color = BALLOON_COLS[(int(absf(wx)) + 2) % 5]
+	var c := Vector2(sx, sy)
+	match skin:
+		1:   # a parasailer: a striped canopy and a tiny pilot on the line
+			var w := r * 1.25
+			_poly(ELL12, c + Vector2(0, r * 0.1), 0.0, Vector2(w, r * (0.5 - 0.1 * sq)), ca)
+			_poly(ELL12, c + Vector2(0, r * 0.1), 0.0, Vector2(w * 0.45, r * (0.5 - 0.1 * sq)), cb)
+			var pl := c + Vector2(0, r * 1.5)
+			draw_line(c + Vector2(-w * 0.8, r * 0.3), pl, BLACK, 2.0)
+			draw_line(c + Vector2(w * 0.8, r * 0.3), pl, BLACK, 2.0)
+			_poly(OCT, pl + Vector2(0, -0.25 * u), 0.0, Vector2(0.28 * u, 0.28 * u), Color(0.93, 0.76, 0.6), 2.0)
+			_poly(RECT, pl + Vector2(0, 0.3 * u), 0.0, Vector2(0.4 * u, 0.5 * u), Color(0.9, 0.9, 0.95), 2.0)
+		2:   # a bunch of party balloons
+			for k in 4:
+				var off := Vector2([-0.5, 0.45, -0.1, 0.1][k], [0.3, 0.25, -0.35, 0.55][k]) * r
+				var bc: Color = BALLOON_COLS[(int(absf(wx)) + k) % 5]
+				draw_line(off + c + Vector2(0, r * 0.4), c + Vector2(0, r * 1.6), Color(0, 0, 0, 0.7), 1.5)
+				_poly(ELL12, off + c, 0.0, Vector2(r * 0.55, r * (0.62 - 0.08 * sq)), bc)
+		_:   # a hot air balloon: a striped envelope, ropes and a basket
+			_poly(ELL12, c, 0.0, Vector2(r * (1.0 + 0.1 * sq), r * (1.0 - 0.14 * sq)), ca)
+			_poly(ELL12, c, 0.0, Vector2(r * 0.6, r * (1.0 - 0.14 * sq)), cb, 0.0)
+			_poly(ELL12, c, 0.0, Vector2(r * 0.22, r * (1.0 - 0.14 * sq)), ca, 0.0)
+			draw_arc(c, r * (1.0 - 0.14 * sq), 0.0, TAU, 20, BLACK, OUTLINE)
+			var bk := c + Vector2(0, r * 1.55)
+			draw_line(c + Vector2(-r * 0.5, r * 0.82), bk + Vector2(-r * 0.22, -r * 0.1), BLACK, 2.0)
+			draw_line(c + Vector2(r * 0.5, r * 0.82), bk + Vector2(r * 0.22, -r * 0.1), BLACK, 2.0)
+			_poly(RECT, bk + Vector2(0, r * 0.08), 0.0, Vector2(r * 0.55, r * 0.3), Color(0.62, 0.42, 0.25), 2.5)
+	draw_arc(c + Vector2(-r * 0.2, -r * 0.1), r * 0.62, PI * 1.15, PI * 1.55, 6, Color(1, 1, 1, 0.55), 4.0)
+
+func _draw_kite(sx: float, sy: float, wx: float, skin: int, sz: float) -> void:
+	var u := _ppm * sz
+	var c := Vector2(sx, sy)
+	var col: Color = BALLOON_COLS[int(absf(wx) * 0.7) % 5]
+	match skin:
+		1:   # a paper plane
+			_poly(PLANE, c, sin(_time * 1.5 + wx) * 0.15, Vector2(1.0, 1.0) * u, Color(0.97, 0.97, 1.0))
+			draw_line(c + Vector2(-1.0, 0.05) * u, c + Vector2(0.4, 0.0) * u, Color(0.6, 0.65, 0.8), 2.0)
+		2:   # a drone: body, arms and four blurred rotors
+			_poly(RECT, c, 0.0, Vector2(1.3, 0.5) * u, Color(0.3, 0.32, 0.4))
+			for k in 2:
+				var ax := (-1.0 if k == 0 else 1.0) * 1.1 * u
+				draw_line(c + Vector2(ax * 0.5, -0.1 * u), c + Vector2(ax, -0.5 * u), BLACK, 5.0)
+				var bl := cos(_time * 38.0 + k) * 0.8 * u
+				draw_line(c + Vector2(ax - bl, -0.55 * u), c + Vector2(ax + bl, -0.55 * u), Color(0.85, 0.88, 0.95, 0.8), 4.0)
+			draw_circle(c + Vector2(0.45 * u, 0.0), 0.1 * u, Color(1.0, 0.2, 0.2) if fmod(_time * 2.0, 1.0) < 0.5 else Color(0.4, 0.1, 0.1))
+		_:   # a diamond kite with a ribboned tail
+			_poly(DIAMOND, c, 0.2, Vector2(1.5, 2.1) * u, col)
+			draw_line(c + Vector2(0, -1.0) * u, c + Vector2(0, 1.0) * u, BLACK, 2.0)
+			draw_line(c + Vector2(-0.75, 0) * u, c + Vector2(0.75, 0) * u, BLACK, 2.0)
+			for k in 9:
+				var t := k / 8.0
+				_zig[k] = c + Vector2(0.2 + t * 3.0, 1.0 + t * 1.2 + sin(_time * 4.0 + t * 7.0 + wx) * 0.35) * u
+			draw_polyline(_zig, BLACK, 5.0)
+			draw_polyline(_zig, Color(1.0, 0.85, 0.3), 2.5)
+			for k in [2, 5, 8]:
+				_poly(TRI, _zig[k], _time + k, Vector2(0.4, 0.5) * u, BALLOON_COLS[(k + int(absf(wx))) % 5], 1.5)
+
+func _draw_flock_member(sx: float, sy: float, wx: float, skin: int, sz: float, z: int) -> void:
+	var u := _ppm * sz
+	var c := Vector2(sx, sy)
+	match skin:
+		3:   # a helicopter: nose to the left, a blurred rotor
+			_poly(ELL12, c, 0.0, Vector2(1.0, 0.62) * u, Color(0.35, 0.5, 0.75))
+			_poly(RECT, c + Vector2(1.6, -0.1) * u, 0.0, Vector2(1.8, 0.22) * u, Color(0.3, 0.42, 0.65), 2.0)
+			_poly(RECT, c + Vector2(2.4, -0.4) * u, 0.0, Vector2(0.2, 0.7) * u, Color(0.3, 0.42, 0.65), 2.0)
+			_poly(OCT, c + Vector2(-0.45, -0.1) * u, 0.0, Vector2(0.4, 0.34) * u, Color(0.75, 0.9, 1.0), 1.5)
+			draw_line(c + Vector2(0, -0.7) * u, c + Vector2(0, -0.95) * u, BLACK, 3.0)
+			var rl := (1.7 + cos(_time * 36.0 + wx) * 0.5) * u
+			draw_line(c + Vector2(-rl, -0.98 * u), c + Vector2(rl, -0.98 * u), Color(0.1, 0.1, 0.15, 0.85), 4.0)
+			draw_line(c + Vector2(-0.8, 0.8) * u, c + Vector2(0.8, 0.8) * u, BLACK, 3.0)
+		4:   # a pterodactyl: wide flapping wings and a crest
+			var fl := sin(_time * 7.0 + wx)
+			var col: Color = Zones.list[z]["bird_color"]
+			_poly(TRI, c + Vector2(0.3, -0.1) * u, 0.0, Vector2(2.6, -(1.0 + fl * 1.2)) * u, col.darkened(0.2))
+			_poly(ELL12, c, 0.0, Vector2(0.9, 0.38) * u, col)
+			_poly(TRI, c + Vector2(-1.2, -0.1) * u, -PI * 0.5, Vector2(0.3, 0.8) * u, Color(1.0, 0.7, 0.15), 2.0)
+			_poly(TRI, c + Vector2(-0.8, -0.45) * u, 0.5, Vector2(0.35, 0.6) * u, Color(0.85, 0.25, 0.2), 1.5)
+			draw_circle(c + Vector2(-0.75, -0.08) * u, 0.07 * u, Color.WHITE)
+		5:   # a UFO: dome, disc and blinking lights
+			_poly(OCT, c + Vector2(0, -0.35) * u, 0.0, Vector2(0.55, 0.45) * u, Color(0.7, 0.92, 1.0, 0.9), 2.0)
+			_poly(ELL12, c, 0.0, Vector2(1.4, 0.4) * u, Color(0.65, 0.68, 0.78))
+			for k in 4:
+				var on := fmod(_time * 3.0 + k * 0.25 + wx, 1.0) < 0.5
+				draw_circle(c + Vector2(-0.9 + k * 0.6, 0.05) * u, 0.1 * u, Color(1.0, 0.9, 0.3) if on else Color(0.45, 0.4, 0.15))
+		_:   # geese, gulls, crows: a bird in the flock
+			var body := Color(0.86, 0.86, 0.9)
+			if skin == 1:
+				body = Color(0.98, 0.98, 0.98)
+			elif skin == 2:
+				body = Color(0.14, 0.14, 0.18)
+			_draw_bird_colored(sx, sy, wx, sz, body)
+
+## A bird with a given body colour (the flock members); the wings flap on their own beat.
+func _draw_bird_colored(sx: float, sy: float, wx: float, scale: float, body: Color) -> void:
+	var flap := sin(_time * 12.0 + wx * 1.7)
+	var o := Vector2(sx, sy)
+	var u := _ppm * scale
+	_poly(BIRD_WING, o + Vector2(0, -0.1 * u), 0.0, Vector2(1.0, -flap * 0.7 - 0.2) * u, body.darkened(0.22))
+	_poly(BIRD_BODY, o, 0.0, Vector2(u, u), body)
+	_poly(BIRD_BEAK, o, 0.0, Vector2(u, u), Color(1.0, 0.7, 0.15), 2.0)
+	draw_circle(o + Vector2(0.6, -0.15) * u, 3.0 * scale, Color(1, 1, 1))
+
+func _draw_ring(sx: float, sy: float, wx: float, state: float, sz: float) -> void:
+	var u := _ppm
+	var R := Tuning.ring_radius * sz * u
+	var c := Vector2(sx, sy)
+	var a := 1.0 if state == 0.0 else (0.28 if state > 0.0 else 0.3)
+	var l := _line[12]
+	for k in 12:
+		var an := k * TAU / 12.0
+		l[k] = c + Vector2(cos(an) * R * 0.3, sin(an) * R)
+	l[12] = l[0]
+	draw_circle(c, R * 0.95, Color(1.0, 0.85, 0.35, 0.14 * a))
+	draw_polyline(l, Color(0, 0, 0, a), 16.0)
+	draw_polyline(l, Color(1.0, 0.55, 0.15, a), 10.0)
+	draw_polyline(l, Color(1.0, 0.9, 0.4, a * 0.9), 4.0)
+	if state == 0.0:
+		for k in 3:
+			var an2 := _time * 2.0 + k * TAU / 3.0 + wx
+			_poly(STAR, c + Vector2(cos(an2) * R * 0.3, sin(an2) * R), 0.0, Vector2(0.9, 0.9) * u, Color(1, 1, 1, 0.9), 1.0)
+
+func _draw_stream(sx: float, sy: float, length: float, sz: float, wx: float) -> void:
+	var u := _ppm
+	var L := length * u
+	var H := Tuning.stream_half_height * sz * u
+	draw_rect(Rect2(sx, sy - H, L, H * 2.0), Color(1, 1, 1, 0.06))
+	for r in 4:
+		var by := sy + (r - 1.5) * H * 0.6
+		for k in 14:
+			var t := k / 13.0
+			var fade := sin(PI * t)
+			_rib[k] = Vector2(sx + t * L, by + sin(t * 9.0 - _time * 3.2 + r * 1.4 + wx) * 0.32 * u * (0.4 + fade))
+		draw_polyline(_rib, Color(1, 1, 1, 0.55), 9.0 - r)
+		draw_polyline(_rib, Color(0.75, 0.93, 1.0, 0.6), 4.0)
+	for k in 7:
+		var t2 := fmod(_time * 0.22 + k / 7.0, 1.0)
+		var p := Vector2(sx + t2 * L, sy + sin(k * 2.3) * H * 0.7)
+		_poly(TRI, p, PI * 0.5, Vector2(0.7, 0.55) * u, Color(1, 1, 1, 0.8 * sin(PI * t2)), 0.0)
+
+func _draw_blimp(sx: float, sy: float, wx: float, skin: int, sz: float, cool: float) -> void:
+	var u := _ppm * sz
+	var c := Vector2(sx, sy)
+	var hl := Tuning.blimp_len * 0.5 * u
+	var hh := Tuning.blimp_height * 0.5 * u
+	var hull: Color = [Color(0.9, 0.3, 0.25), Color(0.95, 0.95, 0.98), Color(0.98, 0.78, 0.2)][skin % 3]
+	var band: Color = [Color(1.0, 0.85, 0.3), Color(0.3, 0.55, 0.9), Color(0.85, 0.3, 0.25)][skin % 3]
+	_poly(RECT, c + Vector2(hl * 0.25, hh * 1.05), 0.0, Vector2(hl * 0.45, hh * 0.38), Color(0.35, 0.38, 0.45), 2.5)        # gondola
+	_poly(TRI, c + Vector2(hl * 0.85, -hh * 0.9), PI, Vector2(hh * 0.9, hh * 1.1), band.darkened(0.2), 2.5)                    # fins
+	_poly(TRI, c + Vector2(hl * 0.85, hh * 0.9), 0.0, Vector2(hh * 0.9, hh * 1.1), band.darkened(0.2), 2.5)
+	_poly(ELL12, c, 0.0, Vector2(hl, hh), hull)
+	_poly(ELL12, c, 0.0, Vector2(hl * 0.3, hh), band, 0.0)
+	draw_circle(c + Vector2(hl * 1.0, 0.0), hh * 0.18, Color(0.3, 0.3, 0.35))
+	var pr := cos(_time * 30.0 + wx) * hh * 0.5
+	draw_line(c + Vector2(hl * 1.04, -pr), c + Vector2(hl * 1.04, pr), Color(0.1, 0.1, 0.15, 0.8), 4.0)
+	draw_arc(c + Vector2(-hl * 0.2, -hh * 0.1), hh * 0.8, PI * 1.1, PI * 1.45, 6, Color(1, 1, 1, 0.45), 4.0)
+	if cool > 0.0:
+		draw_rect(Rect2(c + Vector2(-hl * 0.9, -hh - 6.0), Vector2(hl * 1.8, 5.0)), Color(1.0, 0.95, 0.5, minf(cool, 1.0)))
+
+func _draw_storm(sx: float, sy: float, wx: float, skin: int, sz: float) -> void:
+	var u := _ppm * sz
+	var c := Vector2(sx, sy)
+	var R := Tuning.storm_radius * u
+	var base: Color = [Color(0.34, 0.36, 0.46), Color(0.4, 0.33, 0.3), Color(0.38, 0.2, 0.5)][skin % 3]
+	var bolt: Color = [Color(1.0, 0.95, 0.5), Color(1.0, 0.55, 0.15), Color(0.4, 1.0, 1.0)][skin % 3]
+	var flash := fmod(_time * 0.8 + wx * 0.31, 2.2) < 0.14
+	_poly(ELL12, c + Vector2(-R * 0.55, R * 0.12), 0.0, Vector2(R * 0.5, R * 0.4), base.darkened(0.1))
+	_poly(ELL12, c + Vector2(R * 0.58, R * 0.14), 0.0, Vector2(R * 0.5, R * 0.38), base.darkened(0.1))
+	_poly(ELL12, c + Vector2(-R * 0.15, -R * 0.22), 0.0, Vector2(R * 0.62, R * 0.5), base.lightened(0.18) if flash else base)
+	_poly(ELL12, c + Vector2(R * 0.3, -R * 0.08), 0.0, Vector2(R * 0.5, R * 0.42), base.lightened(0.1) if flash else base.lightened(0.04))
+	_poly(ELL12, c + Vector2(0, R * 0.22), 0.0, Vector2(R * 0.85, R * 0.3), base.darkened(0.22))
+	for k in 7:
+		var rx := c.x + (k - 3) * R * 0.28
+		var ry := c.y + R * 0.5 + fmod(_time * 6.0 + k * 0.37, 1.0) * R * 0.55
+		draw_line(Vector2(rx, ry), Vector2(rx - 6.0, ry + 16.0), Color(0.75, 0.85, 1.0, 0.65) if skin == 0 else Color(bolt, 0.6), 2.5)
+	if flash:
+		_poly(ZAG, c + Vector2(R * 0.05, R * 0.45), 0.0, Vector2(R * 0.5, R * 1.0), bolt, 2.0)
+
+func _draw_find(sx: float, sy: float, wx: float, skin: int) -> void:
+	var u := _ppm
+	var bob := sin(_time * 2.2 + wx) * 0.35 * u
+	var c := Vector2(sx, sy + bob)
+	draw_circle(c, 2.4 * u, Color(1.0, 0.9, 0.4, 0.16 + 0.06 * sin(_time * 4.0)))
+	match skin:
+		0:   # a lost satellite
+			var rot := _time * 0.8
+			_poly(RECT, c, rot, Vector2(0.9, 0.9) * u, Color(0.8, 0.82, 0.88))
+			for sd in [-1.0, 1.0]:
+				_poly(RECT, c + Vector2(cos(rot), sin(rot)) * sd * 1.45 * u, rot, Vector2(1.5, 0.8) * u, Color(0.25, 0.45, 0.85))
+			draw_arc(c + Vector2(-sin(rot), cos(rot)) * 0.7 * u, 0.5 * u, rot, rot + PI, 8, Color(1.0, 0.85, 0.3), 4.0)
+			draw_circle(c + Vector2(sin(rot), -cos(rot)) * 0.7 * u, 0.12 * u, Color(1.0, 0.2, 0.2))
+		1:   # an astronaut cat
+			_poly(OCT, c + Vector2(0, 0.9) * u, 0.0, Vector2(0.55, 0.7) * u, Color(0.95, 0.95, 1.0))
+			_poly(TRI, c + Vector2(-0.45, -0.7) * u, 0.0, Vector2(0.4, 0.55) * u, Color(0.9, 0.55, 0.25), 2.0)
+			_poly(TRI, c + Vector2(0.45, -0.7) * u, 0.0, Vector2(0.4, 0.55) * u, Color(0.9, 0.55, 0.25), 2.0)
+			_poly(OCT, c, 0.0, Vector2(0.75, 0.7) * u, Color(0.92, 0.6, 0.28))
+			draw_circle(c + Vector2(-0.25, -0.1) * u, 0.1 * u, Color.BLACK)
+			draw_circle(c + Vector2(0.25, -0.1) * u, 0.1 * u, Color.BLACK)
+			draw_arc(c, 1.05 * u, 0.0, TAU, 18, Color(0.7, 0.9, 1.0, 0.8), 4.0)
+			draw_arc(c + Vector2(-0.2, -0.2) * u, 0.8 * u, PI * 1.15, PI * 1.5, 6, Color(1, 1, 1, 0.7), 3.0)
+		2:   # a space duck
+			_poly(ELL12, c + Vector2(0, 0.3) * u, 0.0, Vector2(1.0, 0.7) * u, Color(1.0, 0.85, 0.2))
+			_poly(OCT, c + Vector2(-0.55, -0.55) * u, 0.0, Vector2(0.5, 0.5) * u, Color(1.0, 0.85, 0.2))
+			_poly(TRI, c + Vector2(-1.2, -0.5) * u, -PI * 0.5, Vector2(0.3, 0.55) * u, Color(1.0, 0.5, 0.15), 2.0)
+			draw_circle(c + Vector2(-0.7, -0.65) * u, 0.08 * u, Color.BLACK)
+			draw_arc(c + Vector2(-0.55, -0.55) * u, 0.75 * u, 0.0, TAU, 16, Color(0.7, 0.9, 1.0, 0.7), 3.0)
+		_:   # a cosmic cow in a bubble
+			draw_arc(c, 1.35 * u, 0.0, TAU, 20, Color(0.7, 0.9, 1.0, 0.85), 4.0)
+			_poly(RECT, c + Vector2(0.15, 0.1) * u, 0.0, Vector2(1.5, 0.8) * u, Color(0.97, 0.97, 0.97))
+			draw_circle(c + Vector2(0.0, 0.0) * u, 0.18 * u, Color(0.15, 0.15, 0.18))
+			draw_circle(c + Vector2(0.5, 0.25) * u, 0.22 * u, Color(0.15, 0.15, 0.18))
+			_poly(OCT, c + Vector2(-0.85, -0.1) * u, 0.0, Vector2(0.4, 0.38) * u, Color(0.97, 0.97, 0.97))
+			_poly(TRI, c + Vector2(-0.95, -0.5) * u, 0.0, Vector2(0.2, 0.3) * u, Color(0.9, 0.7, 0.5), 1.5)
+	for k in 3:
+		var an := _time * 1.7 + k * TAU / 3.0
+		_poly(STAR, c + Vector2(cos(an), sin(an) * 0.8) * 1.9 * u, 0.0, Vector2(0.7, 0.7) * u, Color(1, 1, 1, 0.85), 1.0)
 
 ## The scrap glint: a thin white star that flashes now and then (each nut on its own beat).
 func _glint(o: Vector2, wx: float, scale: float) -> void:

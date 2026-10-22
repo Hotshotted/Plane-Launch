@@ -3,6 +3,8 @@ extends SceneTree
 ## Flies the real physics with a simple pilot (no rendering) over many seeds and prints how far each
 ## upgrade level gets, plus an "upgrade ladder" showing the economy: a player who always buys the
 ## cheapest affordable upgrade. Used to tune Tuning.gd; the smoke test checks the same properties.
+##   -- bands   time in each altitude band, interactions per flight (by kind and band) and the empty-sky gaps
+##   -- ladder  just the economy ladder          -- gear  frames and launchers
 
 const SEEDS := 10
 
@@ -20,6 +22,7 @@ func fly(levels: Dictionary, seed_value: int, mode: int = 0):
 			1: hold = f.pilot(1.0 / 60.0, 3.0)      # sluggish pilot
 			2: hold = false                          # never touches the screen
 			3: hold = true                           # holds forever
+			4: hold = f.pilot(1.0 / 60.0, 1.0, true) # a player who goes for the prizes (rings, balloons, blimps, streams, scrap)
 		f.advance(1.0 / 60.0, hold)
 		f.ev_n = 0
 		t += 1.0 / 60.0
@@ -54,13 +57,95 @@ func lv(r := 0, w := 0, b := 0, bo := 0, m := 0) -> Dictionary:
 func _initialize() -> void:
 	tn = root.get_node("Tuning")
 	var args := OS.get_cmdline_user_args()
-	if args.has("gear"):
+	if args.has("bands"):
+		bands()
+	elif args.has("gear"):
 		gear()
 	else:
 		if not args.has("ladder"):
 			singles()
 		ladder()
 	quit(0)
+
+## Altitude bands: how a typical flight spends its time in each band, what it reacts to, and whether the sky is ever empty.
+## Two pilots: 0 = passive (just glides well) and 4 = a player who goes for the prizes. Printed per upgrade level.
+func bands() -> void:
+	var seeds := 12
+	var names := ["pads", "fans", "scrap", "birds", "balloons", "kites", "geese", "rings", "streams", "blimps", "storms", "finds", "skips"]
+	for lvl in [0, 3, 6, 10]:
+		for mode in [0, 4]:
+			var levels := lv(lvl, lvl, lvl, mini(lvl, 8), 0)
+			var share := [0.0, 0.0, 0.0, 0.0]
+			var hits := [0.0, 0.0, 0.0, 0.0]
+			var kinds := {}
+			for n in names:
+				kinds[n] = 0.0
+			var dist := 0.0
+			var scrap := 0.0
+			var bonus := 0.0
+			var inter := 0.0
+			var air_t := 0.0
+			var worst_gap := 0.0
+			var long_gap_flights := 0
+			var gap_total := 0.0
+			for sd in seeds:
+				var f = load("res://scripts/Flight.gd").new()
+				f.reset(levels, 2000 + sd)
+				f.launch_auto()
+				var t := 0.0
+				var gap := 0.0
+				var fgap := 0.0
+				while not f.is_over() and t < 400.0:
+					var hold: bool = f.pilot(1.0 / 60.0, 1.0, mode == 4)
+					f.advance(1.0 / 60.0, hold)
+					f.ev_n = 0
+					t += 1.0 / 60.0
+					if f.phase == f.PH_AIR:
+						# is there something worth reacting to on screen? (the screen shows about 24 m ahead and 24 m up and down)
+						var any := false
+						for i in f.MAX_THINGS:
+							if f.t_active[i] != 0 and f.t_x[i] >= f.x - 4.0 and f.t_x[i] < f.x + 24.0 and absf(f.t_y[i] - f.y) <= 24.0:
+								any = true
+								break
+						if any:
+							gap = 0.0
+						else:
+							gap += 1.0 / 60.0
+							gap_total += 1.0 / 60.0
+							fgap = maxf(fgap, gap)
+				worst_gap = maxf(worst_gap, fgap)
+				if fgap > 2.0:
+					long_gap_flights += 1
+				dist += f.distance
+				scrap += f.scrap_total()
+				bonus += f.bonus_scrap
+				inter += f.interactions
+				for b in 4:
+					share[b] += f.band_time[b]
+					hits[b] += f.band_hits[b]
+					air_t += f.band_time[b]
+				kinds["pads"] += f.pad_bounces
+				kinds["fans"] += f.fan_entries
+				kinds["scrap"] += f.picked_count
+				kinds["birds"] += f.bird_hits - f.goose_hits
+				kinds["balloons"] += f.balloon_hits
+				kinds["kites"] += f.kite_hits
+				kinds["geese"] += f.goose_hits
+				kinds["rings"] += f.rings_hit
+				kinds["streams"] += f.stream_entries
+				kinds["blimps"] += f.blimp_hits
+				kinds["storms"] += f.storm_entries
+				kinds["finds"] += f.finds
+				kinds["skips"] += f.skips
+			var line := "L%-2d %-8s %5.0f m  scrap %5.0f (height bonus %4.0f)  time in LOW/MID/HIGH/SKY: %2.0f/%2.0f/%2.0f/%2.0f%%  interactions %4.1f (by band %.1f/%.1f/%.1f/%.1f)" % [lvl, "passive" if mode == 0 else "seeking", dist / seeds, scrap / seeds, bonus / seeds,
+					100.0 * share[0] / air_t, 100.0 * share[1] / air_t, 100.0 * share[2] / air_t, 100.0 * share[3] / air_t, inter / seeds, hits[0] / seeds, hits[1] / seeds, hits[2] / seeds, hits[3] / seeds]
+			print(line)
+			var kl := "      per flight:"
+			for n in names:
+				if kinds[n] > 0.0:
+					kl += " %s %.1f" % [n, kinds[n] / seeds]
+			kl += "   | interactions per 100 m %.1f, empty-sky: worst gap %.1f s, %d of %d flights over 2 s, %.1f s per flight" % [100.0 * inter / maxf(dist, 1.0), worst_gap, long_gap_flights, seeds, gap_total / seeds]
+			print(kl)
 
 ## Frames and launchers: same upgrades, different gear.
 func gear() -> void:

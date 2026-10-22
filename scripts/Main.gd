@@ -48,6 +48,10 @@ var _aim_start := Vector2.ZERO
 # frame time
 var _grinder_t := 0.0
 var _prev_phase := -1
+var _scrap_sum := 0             # nut scrap waiting for its one popup
+var _scrap_mult := 10
+var _scrap_pos := Vector2.ZERO
+var _scrap_t := 0.0
 var _dust_left := 0.0           # seconds of dust trail still to lay (after a bounce)
 var _dust_t := 0.0
 var _wind_t := 0.0
@@ -115,6 +119,7 @@ var _prewarm_zone_idx := -1
 var prewarm_zones_seen := {}   # zones whose scenery was drawn during the pre-warm
 var prewarm_frames_seen := {}
 var prewarm_launchers_seen := {}
+var prewarm_air_seen := {}      # skins of the air objects drawn during the pre-warm
 var _prewarm_levels := {}
 
 ## Pre-warm: show zone `zi`'s scenery with one of every thing, so each zone's shapes are drawn once at boot.
@@ -144,6 +149,21 @@ func _prewarm_zone(zi: int) -> void:
 	flight.add_thing(Flight.K_PAD, x0 + 4.0, base)
 	flight.add_thing(Flight.K_FAN, x0 + 12.0, base)
 	flight.add_thing(Flight.K_BIRD, x0 + 18.0, 12.0)
+	# every kind of air object, in this zone's own skins (the zones together cover every skin)
+	flight.add_thing(Flight.K_BALLOON, x0 + 24.0, 24.0, 0.0, zi % 3)
+	flight.add_thing(Flight.K_KITE, x0 + 30.0, 14.0, 0.0, zi % 3)
+	flight.add_thing(Flight.K_GOOSE, x0 + 34.0, 40.0, 0.0, zi % 6)
+	flight.add_thing(Flight.K_RING, x0 + 22.0, 34.0)
+	flight.add_thing(Flight.K_STREAM, x0 + 8.0, 46.0, 0.0, 0, 30.0)
+	flight.add_thing(Flight.K_BLIMP, x0 + 36.0, 52.0, 0.0, zi % 3)
+	flight.add_thing(Flight.K_STORM, x0 + 44.0, 34.0, 0.0, zi % 3)
+	flight.add_thing(Flight.K_FIND, x0 + 28.0, 62.0, 0.0, zi % 4, 80.0)
+	prewarm_air_seen["balloon%d" % (zi % 3)] = true
+	prewarm_air_seen["flock%d" % (zi % 6)] = true
+	prewarm_air_seen["kite%d" % (zi % 3)] = true
+	prewarm_air_seen["storm%d" % (zi % 3)] = true
+	prewarm_air_seen["find%d" % (zi % 4)] = true
+	prewarm_air_seen["blimp%d" % (zi % 3)] = true
 	if flight.phase != Flight.PH_AIM and zi % 2 == 0:
 		flight.phase = Flight.PH_AIR
 		flight.x = x0 + 8.0
@@ -277,6 +297,8 @@ func _start_flight(daily: bool) -> void:
 		_touch_boost[i] = 0
 	world.ambience = false
 	sfx.set_music("flight")
+	_scrap_sum = 0
+	_scrap_t = 0.0
 	_prev_phase = -1
 	_dust_left = 0.0
 	hud.set_mode(Hud.MODE_FLIGHT)
@@ -295,7 +317,8 @@ func _finish_run() -> void:
 	var claim := Save.claim_zones(flight.zone_max)
 	var stats := {"distance": flight.distance, "picked_value": flight.picked_value, "pad_bounces": flight.pad_bounces, "skips": flight.skips,
 			"fan_entries": flight.fan_entries, "boosts_used": flight.boosts_used, "gears_picked": flight.gears_picked,
-			"bird_hits": flight.bird_hits, "zone_max": flight.zone_max}
+			"bird_hits": flight.bird_hits, "zone_max": flight.zone_max, "rings_hit": flight.rings_hit, "balloon_hits": flight.balloon_hits,
+			"blimp_hits": flight.blimp_hits, "stream_time": flight.stream_time, "high_time": flight.band_time[2] + flight.band_time[3], "finds": flight.finds}
 	var done := Missions.evaluate(Save, stats, rng)
 	var mission_bonus := 0
 	for md in done:
@@ -322,7 +345,7 @@ func _finish_run() -> void:
 		"distance": floorf(flight.distance), "earned": earned, "dist_scrap": flight.scrap_for_distance(),
 		"picked": flight.picked_value, "picked_count": flight.picked_count, "new_best": new_best,
 		"zone_bonus": claim["bonus"], "zone": flight.zone_max, "new_zones": claim["new"],
-		"mission_bonus": mission_bonus, "missions": done, "new_missions": new_missions, "rusty": line, "daily": daily_info, "doubled": false,
+		"mission_bonus": mission_bonus, "height_bonus": int(roundf(flight.bonus_scrap)), "missions": done, "new_missions": new_missions, "rusty": line, "daily": daily_info, "doubled": false,
 	}
 	_finish_timer = 0.0
 
@@ -661,7 +684,7 @@ func frame(delta: float, raw_delta: float = 0.0) -> void:
 		hud.show_aim(true, flight.aim_power, flight.aim_angle)
 	elif state == STATE_FLIGHT:
 		hud.show_aim(false, 0.0, 0.0)
-		hud.set_flight(flight.distance, flight.charges, flight.charges_max, flight.boost_left > 0.0, flight.stall_amount > 0.0)
+		hud.set_flight(flight.distance, flight.charges, flight.charges_max, flight.boost_left > 0.0, flight.stall_amount > 0.0, flight.band)
 		_mission_toasts()
 		if flight.phase == Flight.PH_AIR and flight.time_in_air > 4.0:
 			hud.show_hint(false)
@@ -765,8 +788,19 @@ func _handle_events() -> void:
 			Flight.EV_SCRAP:
 				world.burst(WorldView.P_SPARK, ex, ey, 5, 6.0, 0.4, 0.3, Hud.C_GOLD, rng)
 				sfx.play_clink()
-				var scrap_text := "SCRAP! +%d" % flight.ev_val[k] if Save.mark_seen("scrap") else "+%d" % flight.ev_val[k]
-				hud.popup(scrap_text, world.to_screen(ex, ey) + Vector2(0, -50), Hud.C_GOLD, "scrap")
+				var first_scrap := Save.mark_seen("scrap")
+				if first_scrap or flight.ev_val[k] >= Tuning.scrap_gear_value:
+					var scrap_text := "SCRAP! +%d" % flight.ev_val[k] if first_scrap else "+%d" % flight.ev_val[k]
+					if flight.ev_aux[k] > 10:
+						scrap_text += " " + Tuning.mult_text(flight.ev_aux[k] / 10.0)
+					hud.popup(scrap_text, world.to_screen(ex, ey) + Vector2(0, -50), Hud.C_GOLD, "scrap")
+				else:
+					# nuts arrive in streams: one popup for a few of them ("+7 x2"), not a pile of little ones
+					_scrap_sum += flight.ev_val[k]
+					_scrap_mult = flight.ev_aux[k]
+					_scrap_pos = world.to_screen(ex, ey) + Vector2(0, -50)
+					if _scrap_t <= 0.0:
+						_scrap_t = 0.3
 			Flight.EV_PAD:
 				world.burst(WorldView.P_RUBBER, ex, ey + 0.5, 8, 7.0, 0.5, 0.4, Color(0.2, 0.2, 0.22), rng)
 				var pad_text := "BOUNCE! +speed" if Save.mark_seen("pad") else "BOUNCE! +%d m/s" % flight.ev_val[k]
@@ -821,6 +855,46 @@ func _handle_events() -> void:
 				_launch_fx()
 			Flight.EV_STALL:
 				sfx.play("stall")
+			Flight.EV_BALLOON:
+				world.burst(WorldView.P_FEATHER, ex, ey, 7, 6.0, 0.7, 0.45, Color(1.0, 0.85, 0.7), rng)
+				sfx.play("boing")
+				hud.popup("BALLOON! bounce on its top" if Save.mark_seen("balloon") else "BALLOON! +%d m/s up" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_ACCENT, "balloon")
+				_buzz(25)
+			Flight.EV_RING:
+				world.burst(WorldView.P_SPARK, ex, ey, 14, 9.0, 0.7, 0.4, Color(1.0, 0.8, 0.3), rng)
+				sfx.play("ring")
+				_kick = maxf(_kick, 0.6)
+				hud.popup("RING! fly through for speed" if Save.mark_seen("ring") else "RING! +%d m/s" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_ACCENT, "ring")
+				_buzz(30)
+			Flight.EV_BLIMP:
+				world.burst(WorldView.P_DUST, ex, ey, 6, 5.0, 0.5, 0.5, Color(1, 1, 1), rng)
+				sfx.play("boost")
+				hud.popup("BLIMP! skim the top for speed" if Save.mark_seen("blimp") else "SKIM! +%d m/s" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_ACCENT, "blimp")
+				_buzz(30)
+			Flight.EV_STORM:
+				_kick = maxf(_kick, 0.4)
+				sfx.play("storm")
+				hud.popup("STORM! go over or under" if Save.mark_seen("storm") else "STORM!", world.to_screen(ex, ey) + Vector2(0, -140), Hud.C_DANGER, "highair")
+				_buzz(50)
+			Flight.EV_STREAM:
+				sfx.play("fan")
+				hud.popup("TAILWIND! stay inside" if Save.mark_seen("stream") else "TAILWIND!", world.to_screen(ex, ey) + Vector2(0, -140), Hud.C_TEXT, "tailwind")
+			Flight.EV_HAZARD:
+				var goose: bool = flight.ev_aux[k] == Flight.K_GOOSE
+				world.burst(WorldView.P_FEATHER, ex, ey, 7, 6.0, 0.7, 0.45, Color(0.85, 0.85, 0.9), rng)
+				sfx.play("squawk" if goose else "stall")
+				hud.popup(("FLOCK! -%d m/s" if goose else "KITE! -%d m/s") % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -100), Hud.C_DANGER, "nobird")
+				_buzz(50)
+			Flight.EV_FIND:
+				world.burst(WorldView.P_SPARK, ex, ey, 24, 11.0, 1.0, 0.5, Color(1.0, 0.9, 0.4), rng)
+				sfx.play("find")
+				_kick = maxf(_kick, 0.8)
+				hud.popup("%s! +%d" % [Tuning.FIND_NAMES[clampi(flight.ev_aux[k], 0, 3)], flight.ev_val[k]], world.to_screen(ex, ey) + Vector2(0, -150), Hud.C_GOLD, "find")
+				_buzz(70)
+			Flight.EV_BAND:
+				var nb: int = flight.ev_val[k]
+				sfx.play("band")
+				hud.toast("%s AIR  %s" % [Tuning.BAND_NAMES[nb], Tuning.mult_text(Tuning.band_mult(nb))])
 			Flight.EV_TARGET:
 				hud.popup("TARGET REACHED!", Vector2(_view_size().x * 0.5, 330.0), Hud.C_ACCENT, "flag")
 			Flight.EV_BEST:
@@ -869,6 +943,11 @@ func _lip_fx() -> void:
 ## Per-frame flight effects (all pooled particles): rumble, speed lines, wind, dust trail, the landing tumble.
 func _flight_fx(delta: float) -> void:
 	var ph := flight.phase
+	if _scrap_t > 0.0:
+		_scrap_t -= delta
+		if _scrap_t <= 0.0 and _scrap_sum > 0:
+			hud.popup("+%d%s" % [_scrap_sum, (" " + Tuning.mult_text(_scrap_mult / 10.0)) if _scrap_mult > 10 else ""], _scrap_pos, Hud.C_GOLD, "scrap")
+			_scrap_sum = 0
 	if _prev_phase == Flight.PH_RAMP and ph == Flight.PH_AIR:
 		_lip_fx()
 	_prev_phase = ph

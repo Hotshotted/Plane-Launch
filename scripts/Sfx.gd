@@ -14,9 +14,9 @@ const STEPS := 7               # scrap plinks: this many steps up the scale
 const BEAT := 0.75             # the music: seconds per beat, 8 beats per loop (6 s)
 const GRID := BEAT / 4.0       # scrap plinks wait for the next sixteenth of the music
 const NAMES := ["press", "tap", "back", "toggle", "error", "whoosh", "pause", "tick", "buy", "clank", "stamp", "best", "unlock", "clink",
-		"boing", "fan", "squawk", "boost", "stall", "crunch", "splash", "snap", "swing", "ignite"]
+		"boing", "fan", "squawk", "boost", "stall", "crunch", "splash", "snap", "swing", "ignite", "ring", "storm", "band", "find"]
 const FILES := ["press", "tap", "back", "toggle", "error", "whoosh", "pause", "tick", "buy", "clank", "stamp", "best", "unlock",
-		"boing", "fan", "squawk", "boost", "stall", "crunch", "splash", "snap", "swing", "ignite"]
+		"boing", "fan", "squawk", "boost", "stall", "crunch", "splash", "snap", "swing", "ignite", "ring", "storm", "band", "find"]
 const LAYERS := ["calm", "hot", "wind", "rumble"]
 const FADE_DB_PER_S := 60.0    # every level change is a glide (at most this fast), never a cut
 const GARAGE_CALM_DB := -2.0

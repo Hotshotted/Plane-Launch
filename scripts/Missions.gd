@@ -6,10 +6,10 @@ extends RefCounted
 ## rewards follow how far the player has got, so they are always a stretch but reachable.
 
 const SLOTS := 3
-const TYPES := ["bounce", "scrap", "distance", "noboost_zone", "skip", "updraft", "boost", "gear", "nobird"]
+const TYPES := ["bounce", "scrap", "distance", "noboost_zone", "skip", "updraft", "boost", "gear", "nobird", "ring", "balloon", "blimp", "tailwind", "highair", "find"]
 
 ## Reward weight per type (harder missions pay more).
-const WEIGHT := {"bounce": 0.9, "scrap": 0.9, "distance": 1.0, "noboost_zone": 1.6, "skip": 1.0, "updraft": 0.8, "boost": 0.7, "gear": 0.9, "nobird": 1.1}
+const WEIGHT := {"bounce": 0.9, "scrap": 0.9, "distance": 1.0, "noboost_zone": 1.6, "skip": 1.0, "updraft": 0.8, "boost": 0.7, "gear": 0.9, "nobird": 1.1, "ring": 1.0, "balloon": 0.9, "blimp": 1.2, "tailwind": 0.9, "highair": 1.1, "find": 1.8}
 
 static func _round5(v: float) -> int:
 	return maxi(5, int(roundf(v / 5.0)) * 5)
@@ -19,6 +19,12 @@ static func available(type: String, save: Node) -> bool:
 	match type:
 		"skip":
 			return save.zone_best >= 2
+		"balloon", "ring", "tailwind":
+			return save.best_distance >= 120.0
+		"blimp", "highair":
+			return save.best_distance >= 250.0
+		"find":
+			return save.level("ramp") >= 7      # finds only appear for big launches
 		"boost":
 			return save.level("booster") >= 1
 		"noboost_zone":
@@ -50,6 +56,18 @@ static func make(type: String, save: Node) -> Dictionary:
 			target = mini(1 + int(p / 200.0), 5)
 		"nobird":
 			target = _round5(p * 0.9 + 30.0)
+		"ring":
+			target = mini(2 + int(p / 400.0), 6)
+		"balloon":
+			target = mini(2 + int(p / 300.0), 6)
+		"blimp":
+			target = mini(1 + int(p / 700.0), 3)
+		"tailwind":
+			target = mini(3 + int(p / 250.0), 12)
+		"highair":
+			target = mini(4 + int(p / 200.0), 15)
+		"find":
+			target = 1
 	var reward := _round5((30.0 + p * 0.25) * float(WEIGHT[type]) * Tuning.mission_reward_mult)
 	return {"type": type, "target": target, "reward": reward, "zone": zone, "best": 0, "fresh": false}
 
@@ -92,6 +110,18 @@ static func describe(m: Dictionary) -> String:
 			return "Collect %d gear%s in one flight" % [m["target"], "" if m["target"] == 1 else "s"]
 		"nobird":
 			return "Fly %d m without hitting a bird" % m["target"]
+		"ring":
+			return "Fly through %d ring%s" % [m["target"], "" if m["target"] == 1 else "s"]
+		"balloon":
+			return "Bounce off %d balloon%s" % [m["target"], "" if m["target"] == 1 else "s"]
+		"blimp":
+			return "Skim %d blimp%s" % [m["target"], "" if m["target"] == 1 else "s"]
+		"tailwind":
+			return "Ride tailwinds for %d s" % m["target"]
+		"highair":
+			return "Spend %d s in high air" % m["target"]
+		"find":
+			return "Find a treasure in the sky"
 	return "?"
 
 ## What a finished flight (stats) amounts to for this mission, in the mission's own units.
@@ -115,6 +145,18 @@ static func value_of(m: Dictionary, st: Dictionary) -> int:
 			return int(st["gears_picked"])
 		"nobird":
 			return int(st["distance"]) if st["bird_hits"] == 0 else 0
+		"ring":
+			return int(st["rings_hit"])
+		"balloon":
+			return int(st["balloon_hits"])
+		"blimp":
+			return int(st["blimp_hits"])
+		"tailwind":
+			return int(st["stream_time"])
+		"highair":
+			return int(st["high_time"])
+		"find":
+			return int(st["finds"])
 	return 0
 
 ## The same, read straight from a flight in progress (no allocation).
@@ -138,6 +180,18 @@ static func value_live(m: Dictionary, f) -> int:
 			return f.gears_picked
 		"nobird":
 			return int(f.distance) if f.bird_hits == 0 else 0
+		"ring":
+			return f.rings_hit
+		"balloon":
+			return f.balloon_hits
+		"blimp":
+			return f.blimp_hits
+		"tailwind":
+			return int(f.stream_time)
+		"highair":
+			return int(f.band_time[2] + f.band_time[3])
+		"find":
+			return f.finds
 	return 0
 
 ## The short name used in toasts and next to the progress bar: "Bounces", "Scrap" ...
@@ -161,11 +215,23 @@ static func short_name(m: Dictionary) -> String:
 			return "Gears"
 		"nobird":
 			return "No birds"
+		"ring":
+			return "Rings"
+		"balloon":
+			return "Balloons"
+		"blimp":
+			return "Blimps"
+		"tailwind":
+			return "Tailwind"
+		"highair":
+			return "High air"
+		"find":
+			return "Finds"
 	return "?"
 
 ## "Bounces 2/3" (distance ones add " m").
 static func progress_text(m: Dictionary, value: int) -> String:
-	var unit := " m" if m["type"] == "distance" or m["type"] == "nobird" else ""
+	var unit := " m" if m["type"] == "distance" or m["type"] == "nobird" else (" s" if m["type"] == "tailwind" or m["type"] == "highair" else "")
 	return "%s %d/%d%s" % [short_name(m), mini(value, int(m["target"])), int(m["target"]), unit]
 
 ## Best single-flight progress so far, 0..1 (for the bar on the clipboard).
@@ -194,6 +260,18 @@ static func is_done(m: Dictionary, st: Dictionary) -> bool:
 			return st["gears_picked"] >= m["target"]
 		"nobird":
 			return st["distance"] >= m["target"] and st["bird_hits"] == 0
+		"ring":
+			return st["rings_hit"] >= m["target"]
+		"balloon":
+			return st["balloon_hits"] >= m["target"]
+		"blimp":
+			return st["blimp_hits"] >= m["target"]
+		"tailwind":
+			return int(st["stream_time"]) >= m["target"]
+		"highair":
+			return int(st["high_time"]) >= m["target"]
+		"find":
+			return st["finds"] >= m["target"]
 	return false
 
 ## Check every active mission against a finished flight. Completed ones are replaced; returns them as

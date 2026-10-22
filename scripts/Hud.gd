@@ -59,6 +59,10 @@ var mode := MODE_SHOP
 var _flight_root: Control
 var _dist: Label
 var _best: Label
+var _mult: Label                  # "MID x1.5": the altitude band and its scrap multiplier, next to the distance
+var _mult_style: StyleBoxFlat
+var _mult_band := -1
+var _mult_pop := 0.0
 var _toast: Label
 var _toast_born := -10.0
 var _stall: Label
@@ -213,7 +217,7 @@ func _apply_safe() -> void:
 	var sb := Style.safe_bottom
 	var sl := Style.safe_left
 	var sr := Style.safe_right
-	for c in [_dist, _best, _toast, _scrim, _top_row, _shop_bar["row"], _ad_boost_btn, _bubble, _clip, _pause_btn]:
+	for c in [_dist, _best, _mult, _toast, _scrim, _top_row, _shop_bar["row"], _ad_boost_btn, _bubble, _clip, _pause_btn]:
 		c.offset_top += st
 		c.offset_bottom += st
 	for c in [_boost_panel, _boost_pips]:
@@ -542,6 +546,21 @@ func _build_flight_hud() -> void:
 	_dist.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	_dist.offset_top = 44
 	_flight_root.add_child(_dist)
+	_mult = _label(SMALL, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER, 0)
+	_mult_style = _box(Color(Style.SURFACE_DARK, 0.85), Style.TEXT_SOFT, Style.R_PILL, 3)
+	_mult_style.content_margin_left = 16
+	_mult_style.content_margin_right = 16
+	_mult_style.content_margin_top = 4
+	_mult_style.content_margin_bottom = 4
+	_mult.add_theme_stylebox_override("normal", _mult_style)
+	_mult.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_mult.offset_left = 225
+	_mult.offset_right = 395
+	_mult.offset_top = 80
+	_mult.offset_bottom = 132
+	_mult.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_mult.pivot_offset = Vector2(85, 26)
+	_flight_root.add_child(_mult)
 	_best = _label(SMALL, C_MUTED, HORIZONTAL_ALIGNMENT_CENTER, 6)
 	_best.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	_best.offset_top = 188
@@ -650,7 +669,14 @@ func set_daily_target(target: int) -> void:
 	if target > 0:
 		_best.text = "DAILY TARGET %s m" % Tuning.fmt(target)
 
-func set_flight(distance: float, charges: int, charges_max: int, boosting: bool, stalled: bool) -> void:
+func set_flight(distance: float, charges: int, charges_max: int, boosting: bool, stalled: bool, band: int = 0) -> void:
+	if band != _mult_band:
+		_mult_band = band
+		_mult.text = "%s %s" % [Tuning.BAND_NAMES[band], Tuning.mult_text(Tuning.band_mult(band))]
+		var bc: Color = [Style.TEXT_SOFT, Style.SUCCESS, Style.ACCENT, Style.PRIMARY.lightened(0.35)][band]
+		_mult_style.border_color = bc
+		_mult.add_theme_color_override("font_color", bc if band > 0 else C_MUTED)
+		_mult_pop = 1.0
 	var d := int(distance)
 	if d != _last_dist:
 		_last_dist = d
@@ -1361,6 +1387,8 @@ func _fill_results(last: Dictionary) -> void:
 		parts.append("%s zone bonus" % Tuning.fmt(last["zone_bonus"]))
 	if last["mission_bonus"] > 0:
 		parts.append("%s missions" % Tuning.fmt(last["mission_bonus"]))
+	if int(last.get("height_bonus", 0)) > 0:
+		parts.append("%s from height" % Tuning.fmt(last["height_bonus"]))
 	var detail := "  ·  ".join(parts) + "\nFarthest zone: %s" % Tuning.zone_name(last["zone"])
 	if daily.size() > 0:
 		detail += "\nDAILY: %s / %s m%s" % [Tuning.fmt(daily["distance"]), Tuning.fmt(daily["target"]), "   BONUS +" + Tuning.fmt(daily["bonus"]) if daily["bonus"] > 0 else ""]
@@ -1598,6 +1626,7 @@ func _build_stamp() -> void:
 # ---------------------------------------------------------------------------------------------
 
 func set_mode(m: int) -> void:
+	_mult_band = -1
 	var changed := m != mode
 	mode = m
 	_flight_root.visible = m == MODE_FLIGHT
@@ -1740,6 +1769,7 @@ func prewarm_show(on: bool) -> void:
 		p.text = "BOUNCE! +12 NEW BEST!"
 	if on:
 		_dist.text = "1234 m"
+		_mult.text = "HIGH x2"
 		_best.text = "BEST 1234 m"
 		_toast.text = "Bounces 2/3"
 		_banner.text = "NEW ZONE!\nCLOUD KINGDOM\n+1,900 scrap"
@@ -2129,6 +2159,9 @@ func _process(delta: float) -> void:
 	_update_cards(delta)
 	_update_results(delta)
 	_scrap_pop = maxf(_scrap_pop - delta * 3.0, 0.0)
+	if _mult_pop > 0.0:
+		_mult_pop = maxf(_mult_pop - delta * 3.0, 0.0)
+		_mult.scale = Vector2.ONE * (1.0 + 0.35 * sin(_mult_pop * PI))
 	_shop_scrap.pivot_offset = Vector2(0.0, _shop_scrap.size.y * 0.5)
 	_shop_scrap.scale = Vector2.ONE * (1.0 + 0.25 * _scrap_pop)
 	_update_perf(delta)

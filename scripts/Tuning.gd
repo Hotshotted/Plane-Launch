@@ -113,6 +113,45 @@ var bird_drift := 2.5
 var scrap_pick_radius := 1.0
 var scrap_nut_value := 1
 var scrap_gear_value := 6
+
+## Altitude bands (metres above the ground): low (ground), mid, high, very high. Scrap earned is multiplied by the band the
+## glider is in when it earns it (distance pay as it flies, pickups when they are picked up).
+var band_edge_1 := 10.0
+var band_edge_2 := 24.0
+var band_edge_3 := 48.0
+var band_mult_0 := 1.0
+var band_mult_1 := 1.5
+var band_mult_2 := 2.0
+var band_mult_3 := 2.5
+const BAND_NAMES := ["LOW", "MID", "HIGH", "SKY"]
+
+## Mid air: hot air balloons (clip the top to bounce up), kites and geese (slow you on contact).
+var balloon_r := 2.3
+var balloon_kick := 15.0
+var balloon_restitution := 0.7
+var kite_slow := 0.9
+var kite_radius := 1.2
+var goose_slow := 0.86
+var goose_radius := 1.0
+## High air: boost rings, tailwind streams, blimps (skim the top), storm clouds.
+var ring_radius := 3.4
+var ring_boost := 5.0
+var ring_scrap := 3
+var stream_accel := 3.5
+var stream_half_height := 3.6
+var stream_len := 42.0
+var blimp_len := 9.0
+var blimp_height := 3.2
+var blimp_boost := 5.0
+var blimp_kick := 4.5
+var storm_radius := 5.2
+var storm_down := 15.0
+var storm_drag := 0.6
+## Very high: joke finds that pay big (before the band multiplier).
+var find_radius := 2.8
+var find_value := [80, 200, 120, 160]       # lost satellite, astronaut cat, rubber duck, cow in a bubble
+const FIND_NAMES := ["LOST SATELLITE", "ASTRONAUT CAT", "SPACE DUCK", "COSMIC COW"]
+var find_min_reach := 34.0                  # finds only appear for launches that can really get up there
 ## Chunk weights: how often each kind of pattern comes up, and the length of a chunk (m).
 var chunk_len_min := 26.0
 var chunk_len_max := 40.0
@@ -122,7 +161,17 @@ var w_pad := 1.5
 var w_fan := 1.0
 var w_bird := 1.0
 var w_gear := 0.5
-var w_low := 0.6
+var w_low := 0.35
+## Air pattern chances (times each zone's own weights): balloon, kite, geese, weave (scrap leading up a band), ring, stream, blimp, storm, find.
+var w_balloon := 1.6
+var w_kite := 0.9
+var w_geese := 1.0
+var w_weave := 1.3
+var w_ring := 1.4
+var w_stream := 1.0
+var w_blimp := 0.8
+var w_storm := 0.7
+var w_find := 0.6
 ## Birds get more common with distance: extra weight per 1000 m.
 var bird_weight_per_km := 2.0
 ## First chunk starts this far past the ramp lip.
@@ -251,9 +300,9 @@ var mission_reward_mult := 1.0
 
 # ---------- Economy ----------
 ## Scrap earned per meter flown.
-var scrap_per_meter := 0.5
+var scrap_per_meter := 0.38
 ## Every upgrade's price: base * growth ^ level, times these two global multipliers.
-var cost_mult := 1.0
+var cost_mult := 1.4
 var cost_growth_add := 0.0
 
 ## id, name, max level, base cost, cost growth per level, unit shown in the shop.
@@ -264,6 +313,39 @@ var upgrades: Array[Dictionary] = [
 	{"id": "booster", "name": "Booster", "max": 8, "base_cost": 84.0, "growth": 1.65, "blurb": "boosts per run"},
 	{"id": "magnet", "name": "Scrap Magnet", "max": 8, "base_cost": 20.0, "growth": 1.45, "blurb": "pickup reach"},
 ]
+
+## Altitude band of a height above the ground: 0 low, 1 mid, 2 high, 3 very high.
+func band_of(alt: float) -> int:
+	if alt < band_edge_1:
+		return 0
+	if alt < band_edge_2:
+		return 1
+	return 2 if alt < band_edge_3 else 3
+
+func band_mult(b: int) -> float:
+	match b:
+		0:
+			return band_mult_0
+		1:
+			return band_mult_1
+		2:
+			return band_mult_2
+	return band_mult_3
+
+## "x2", "x1.5": the multiplier as shown next to the distance.
+func mult_text(m: float) -> String:
+	return "x%d" % int(m) if is_equal_approx(m, floorf(m)) else "x%.1f" % m
+
+## The lowest height of band b (metres).
+func band_floor(b: int) -> float:
+	match b:
+		0:
+			return 0.0
+		1:
+			return band_edge_1
+		2:
+			return band_edge_2
+	return band_edge_3
 
 func zone_index(x: float) -> int:
 	return Zones.index_at(x, zone_distance_mult)

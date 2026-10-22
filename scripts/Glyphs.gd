@@ -8,14 +8,14 @@ extends RefCounted
 ##   upgrades   ramp wings body booster magnet            launchers  ramp sling catapult sled
 ##   frames     scrapper feather anvil pogo               cosmetics  paint hat trail  hat_cap hat_tophat hat_party hat_crown
 ##                                                         trail_sparkle trail_smoke trail_bubbles trail_rainbow
-##   missions   bounce scrap distance noboost_zone skip updraft boost gear nobird
+##   missions   bounce scrap distance noboost_zone skip updraft boost gear nobird ring balloon blimp tailwind highair find
 ##   stats      scrap gear star trophy flag speed altitude clock
 ##   buttons    play pause restart home back close check lock speaker note ad garage style daily chev_up chev_down rocket
 
 const ALL := ["ramp", "wings", "body", "booster", "magnet", "sling", "catapult", "sled", "scrapper", "feather", "anvil", "pogo",
 		"paint", "hat", "trail", "hat_cap", "hat_tophat", "hat_party", "hat_crown", "trail_sparkle", "trail_smoke", "trail_bubbles", "trail_rainbow",
 		"bounce", "scrap", "distance", "noboost_zone", "skip", "updraft", "boost", "gear", "nobird", "star", "trophy", "flag", "speed", "altitude", "clock",
-		"propeller", "play", "pause", "restart", "home", "back", "close", "check", "lock", "speaker", "note", "ad", "garage", "style", "daily", "chev_up", "chev_down", "rocket"]
+		"ring", "balloon", "blimp", "tailwind", "highair", "find", "propeller", "play", "pause", "restart", "home", "back", "close", "check", "lock", "speaker", "note", "ad", "garage", "style", "daily", "chev_up", "chev_down", "rocket"]
 
 const GOLD := Style.ACCENT
 const FLAME := Color(1.0, 0.55, 0.15)
@@ -254,6 +254,50 @@ static func draw(ci: CanvasItem, id: String, c: Vector2, r: float, col: Color = 
 			for k in 8:
 				var an := k * PI / 4.0
 				ci.draw_line(c + Vector2(cos(an), sin(an)) * r * 0.7, c + Vector2(cos(an), sin(an)) * r * 1.0, Color(GOLD, a), w * 1.3, true)
+		"ring":          # a boost ring with the glider's path through it
+			ci.draw_arc(c, r * 0.78, 0.0, TAU, 24, Color(FLAME, a), w * 1.7)
+			ci.draw_arc(c, r * 0.78, 0.0, TAU, 24, Color(GOLD, a), w * 0.7)
+			_line(ci, c, r, Vector2(-0.95, 0.35), Vector2(0.95, -0.35), col, w * 0.9)
+			_poly(ci, c, r, [Vector2(0.95, -0.35), Vector2(0.45, -0.38), Vector2(0.62, 0.02)], col)
+		"balloon":
+			_circle(ci, c, r, Vector2(0, -0.28), 0.62, col)
+			_poly(ci, c, r, [Vector2(-0.4, 0.15), Vector2(0.4, 0.15), Vector2(0.0, 0.42)], col)
+			_line(ci, c, r, Vector2(-0.25, 0.3), Vector2(-0.18, 0.62), col, w * 0.6)
+			_line(ci, c, r, Vector2(0.25, 0.3), Vector2(0.18, 0.62), col, w * 0.6)
+			_rect(ci, c, r, -0.2, 0.6, 0.4, 0.32, col)
+			_rect(ci, c, r, -0.08, -0.85, 0.16, 1.0, Color(1, 1, 1, a * 0.35))
+		"blimp":
+			var hull := []
+			for k in 14:
+				var an := k * TAU / 14.0
+				hull.append(Vector2(cos(an) * 0.9, sin(an) * 0.42 - 0.08))
+			_poly(ci, c, r, hull, col)
+			_poly(ci, c, r, [Vector2(-0.7, -0.1), Vector2(-1.0, -0.45), Vector2(-0.45, -0.28)], col)
+			_poly(ci, c, r, [Vector2(-0.7, 0.0), Vector2(-1.0, 0.35), Vector2(-0.45, 0.2)], col)
+			_rect(ci, c, r, -0.2, 0.34, 0.4, 0.22, col)
+			_line(ci, c, r, Vector2(-0.4, -0.35), Vector2(-0.4, 0.2), Color(1, 1, 1, a * 0.4), w * 0.5)
+			_line(ci, c, r, Vector2(0.1, -0.4), Vector2(0.1, 0.25), Color(1, 1, 1, a * 0.4), w * 0.5)
+		"tailwind":
+			for k in 3:
+				_poly_line(ci, c, r, [Vector2(-0.9, -0.5 + k * 0.5), Vector2(-0.3, -0.62 + k * 0.5), Vector2(0.3, -0.38 + k * 0.5), Vector2(0.75, -0.5 + k * 0.5)], col, w * 1.1)
+			_poly(ci, c, r, [Vector2(0.95, 0.0), Vector2(0.5, -0.32), Vector2(0.5, 0.32)], col)
+		"highair":
+			_circle(ci, c, r, Vector2(-0.35, 0.3), 0.36, col)
+			_circle(ci, c, r, Vector2(0.1, 0.18), 0.48, col)
+			_circle(ci, c, r, Vector2(0.55, 0.34), 0.32, col)
+			_rect(ci, c, r, -0.7, 0.3, 1.55, 0.36, col)
+			_poly_line(ci, c, r, [Vector2(-0.25, -0.2), Vector2(0.1, -0.62), Vector2(0.45, -0.2)], Color(GOLD, a), w * 1.2)
+			_poly_line(ci, c, r, [Vector2(-0.25, -0.62), Vector2(0.1, -0.98), Vector2(0.45, -0.62)], Color(GOLD, a * 0.6), w * 1.2)
+		"find":          # a little flying saucer: the joke finds up in the sky
+			var dome := []
+			for k in 9:
+				var an := PI + k * PI / 8.0
+				dome.append(Vector2(cos(an) * 0.42, sin(an) * 0.5 - 0.1))
+			_poly(ci, c, r, dome, Color(Style.PRIMARY.lightened(0.3), a))
+			_poly(ci, c, r, [Vector2(-0.95, 0.15), Vector2(-0.5, -0.12), Vector2(0.5, -0.12), Vector2(0.95, 0.15), Vector2(0.5, 0.42), Vector2(-0.5, 0.42)], col)
+			for k in 3:
+				_circle(ci, c, r, Vector2(-0.4 + k * 0.4, 0.15), 0.08, Color(GOLD, a))
+			_star(ci, c + Vector2(0.65, -0.65) * r, r * 0.3, Color(GOLD, a))
 		"propeller":     # the studio mark: three bold blades round a hub
 			for k in 3:
 				var an := k * TAU / 3.0

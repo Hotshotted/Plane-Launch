@@ -202,7 +202,7 @@ func _initialize() -> void:
 	f.add_thing(FlightS.K_NUT, 4.0, 30.0)
 	f.add_thing(FlightS.K_GEAR, 8.0, 29.3)
 	f.advance(1.2, false)
-	check(f.picked_value == tn.scrap_nut_value + tn.scrap_gear_value, "scrap in the glider's path is collected (%d)" % f.picked_value)
+	check(f.picked_value == (tn.scrap_nut_value + tn.scrap_gear_value) * tn.band_mult(tn.band_of(30.0)), "scrap in the glider's path is collected, times the band's height bonus (%d)" % f.picked_value)
 	f = air(0, 30, 15, 0, 0)
 	f.add_thing(FlightS.K_NUT, 8.0, 34.5)
 	f.advance(0.8, true)
@@ -210,7 +210,7 @@ func _initialize() -> void:
 	f = air(0, 30, 15, 0, 0, lv(0, 0, 0, 0, 8))
 	f.add_thing(FlightS.K_NUT, 8.0, 34.5)
 	f.advance(0.8, true)
-	check(no_magnet == 0 and f.picked_value == tn.scrap_nut_value, "the Scrap Magnet pulls in scrap the glider would miss")
+	check(no_magnet == 0 and f.picked_value == tn.scrap_nut_value * tn.band_mult(tn.band_of(30.0)), "the Scrap Magnet pulls in scrap the glider would miss")
 	check(tn.magnet_radius(8) > tn.magnet_radius(0) * 3.0, "magnet reach grows a lot with levels")
 	f = air(0, 100, 20, 0, 0, lv(0, 0, 0, 3, 0))
 	var charges0: int = f.charges
@@ -372,7 +372,7 @@ func _initialize() -> void:
 	var river_pads := 0
 	var junk_pads := 0
 	for z_start in [1600.0, 700.0, 380.0, 20.0]:
-		f = air(0, 50, 20)
+		f = air(0, 8, 20)
 		f.rng.seed = 11
 		for c in 60:
 			f.clear_things()
@@ -478,7 +478,8 @@ func _initialize() -> void:
 		saw_boost = saw_boost or mm2["type"] == "boost"
 	check(saw_skip and saw_boost, "...and they appear once they can be done")
 	sv.reset_all()
-	var stats := {"distance": 100.0, "picked_value": 30, "pad_bounces": 3, "skips": 4, "fan_entries": 2, "boosts_used": 0, "gears_picked": 2, "bird_hits": 0, "zone_max": 2}
+	var stats := {"distance": 100.0, "picked_value": 30, "pad_bounces": 3, "skips": 4, "fan_entries": 2, "boosts_used": 0, "gears_picked": 2, "bird_hits": 0, "zone_max": 2,
+			"rings_hit": 3, "balloon_hits": 3, "blimp_hits": 3, "stream_time": 5.0, "high_time": 6.0, "finds": 3}
 	var done_all := true
 	for t in MissionsS.TYPES:
 		var mt := {"type": t, "target": 2, "reward": 10, "zone": 2}
@@ -1017,7 +1018,7 @@ func _initialize() -> void:
 	var names: Array[String] = []
 	for l in flight_labels:
 		names.append(l.text)
-	check(flight_labels.size() == 3 and main.hud._dist in flight_labels and main.hud._best in flight_labels and main.hud._boost_pips.visible, "flight screen: only distance, best line, boost button and pips are on screen (%s)" % str(names))
+	check(flight_labels.size() == 4 and main.hud._dist in flight_labels and main.hud._best in flight_labels and main.hud._mult in flight_labels and main.hud._boost_pips.visible, "flight screen: only distance, best line, boost button and pips are on screen (%s)" % str(names))
 	var fsizes := {}
 	font_sizes(main.hud._flight_root, fsizes)
 	check(fsizes.size() <= 3 and main.hud._dist.get_theme_font_size("font_size") == HudS.HERO, "flight screen: distance is the biggest text, at most three sizes (%s)" % str(fsizes.keys()))
@@ -1627,6 +1628,226 @@ func _initialize() -> void:
 	check(checker5f.contains("setCPUThrottlingRate") and checker5f.contains("clicks") and checker5f.contains("dropouts") and checker5f.contains("repeated") and checker5f.contains("clipped") and checker5f.contains("louder than the music") and checker5f.contains("hidden"), "the CI web audio check covers throttling, clicks, dropouts, repeats, clipping, levels and background leaks")
 	var wf5f := FileAccess.get_file_as_string("res://.github/workflows/deploy.yml")
 	check(wf5f.contains("web_audio_check.js") and wf5f.contains("assets/audio/loops"), "CI runs the web audio check and ships the loops beside the page")
+
+	print("5g. altitude bands and the air above the ground")
+	check(tn.band_of(0.0) == 0 and tn.band_of(9.9) == 0 and tn.band_of(10.0) == 1 and tn.band_of(23.9) == 1 and tn.band_of(24.0) == 2 and tn.band_of(47.9) == 2 and tn.band_of(48.0) == 3, "four altitude bands: low, mid, high, sky")
+	check(tn.band_mult(0) == 1.0 and tn.band_mult(1) > tn.band_mult(0) and tn.band_mult(2) > tn.band_mult(1) and tn.band_mult(3) > tn.band_mult(2) and tn.mult_text(2.0) == "x2" and tn.mult_text(1.5) == "x1.5", "the height multiplier climbs with every band")
+	var ab_pay := {}
+	for ab_alt in [8.0, 18.0, 30.0]:
+		var ab_f = air(0.5, ab_alt + 0.55, 30.0, 0.0)
+		ab_f.advance(0.4, false)
+		ab_pay[ab_alt] = ab_f.dist_acc / maxf(ab_f.distance * tn.scrap_per_meter, 0.001)
+	check(absf(ab_pay[8.0] - 1.0) < 0.05 and absf(ab_pay[18.0] - tn.band_mult(1)) < 0.1 and absf(ab_pay[30.0] - tn.band_mult(2)) < 0.1, "distance pays more the higher you fly (x%.2f, x%.2f, x%.2f)" % [ab_pay[8.0], ab_pay[18.0], ab_pay[30.0]])
+	var ab_nut = air(0.0, 31.0, 20.0, 0.0)
+	ab_nut.add_thing(FlightS.K_NUT, 3.0, 31.0)
+	ab_nut.add_thing(FlightS.K_NUT, 6.0, 31.0)
+	ab_nut.advance(0.6, false)
+	check(ab_nut.picked_count == 2 and ab_nut.picked_value == int(floorf(2.0 * tn.band_mult(2))) and ab_nut.bonus_scrap > 0.0, "scrap picked up high is worth more (%d for 2 nuts)" % ab_nut.picked_value)
+	# balloons: clip the top to bounce up; the body does nothing
+	var ab_bt: float = tn.balloon_r
+	var ab_b = air(5.0, 20.0 + ab_bt + 0.55 + 0.2, 8.0, -4.0)
+	ab_b.add_thing(FlightS.K_BALLOON, 5.0, 20.0)
+	ab_b.advance(0.1, false)
+	check(ab_b.balloon_hits == 1 and ab_b.vy > 10.0, "a balloon's top bounces you up (vy %.1f)" % ab_b.vy)
+	var ab_s = air(5.0, 20.0, 8.0, -3.0)
+	ab_s.add_thing(FlightS.K_BALLOON, 5.0, 20.0)
+	ab_s.advance(0.1, false)
+	check(ab_s.balloon_hits == 0 and ab_s.vy < 0.0, "through the middle of a balloon nothing happens")
+	# kites and geese slow you; geese count as birds, kites do not
+	var ab_k = air(0.0, 20.0, 30.0, 0.0)
+	ab_k.add_thing(FlightS.K_KITE, 3.0, 20.0)
+	var ab_k0: float = ab_k.speed()
+	ab_k.advance(0.3, false)
+	check(ab_k.kite_hits == 1 and ab_k.bird_hits == 0 and ab_k.speed() < ab_k0 * 0.95, "a kite slows you (%.1f to %.1f)" % [ab_k0, ab_k.speed()])
+	var ab_g = air(0.0, 20.0, 30.0, 0.0)
+	ab_g.add_thing(FlightS.K_GOOSE, 3.0, 20.0)
+	var ab_g0: float = ab_g.speed()
+	ab_g.advance(0.3, false)
+	check(ab_g.goose_hits == 1 and ab_g.bird_hits == 1 and ab_g.speed() < ab_g0 * 0.93, "a goose slows you and counts as a bird (%.1f to %.1f)" % [ab_g0, ab_g.speed()])
+	# rings: through the middle for a speed burst, missed ones do nothing
+	var ab_r = air(0.0, 31.0, 20.0, 0.0)
+	ab_r.add_thing(FlightS.K_RING, 6.0, 30.5)
+	ab_r.advance(0.6, false)
+	check(ab_r.rings_hit == 1 and ab_r.speed() > 20.0 + tn.ring_boost * 0.6, "a ring gives a speed burst (%.1f m/s)" % ab_r.speed())
+	var ab_rm = air(0.0, 31.0, 20.0, 0.0)
+	ab_rm.add_thing(FlightS.K_RING, 6.0, 42.0)
+	ab_rm.advance(0.6, false)
+	check(ab_rm.rings_hit == 0 and ab_rm.speed() < 21.0, "a ring you fly past does nothing")
+	# tailwind streams push while you are inside them
+	var ab_t = air(0.0, 31.0, 20.0, 0.0)
+	ab_t.add_thing(FlightS.K_STREAM, 1.0, 30.5, 0.0, 0, 30.0)
+	var ab_t0 = air(0.0, 31.0, 20.0, 0.0)
+	ab_t.advance(0.6, false)
+	ab_t0.advance(0.6, false)
+	check(ab_t.stream_entries == 1 and ab_t.stream_time > 0.4 and ab_t.vx > ab_t0.vx + 1.5, "a tailwind pushes you along (%.1f vs %.1f m/s)" % [ab_t.vx, ab_t0.vx])
+	# blimps: skim the top for a boost, once per pass
+	var ab_bl = air(5.0, 30.0 + tn.blimp_height * 0.5 + 0.55 + 0.2, 15.0, -3.0)
+	ab_bl.add_thing(FlightS.K_BLIMP, 5.0, 30.0)
+	ab_bl.advance(0.1, false)
+	var ab_bl1: int = ab_bl.blimp_hits
+	ab_bl.advance(0.3, false)
+	check(ab_bl1 == 1 and ab_bl.blimp_hits == 1 and ab_bl.vx > 15.0 + tn.blimp_boost * 0.7, "skimming a blimp's top is a speed boost, once per pass (%.1f m/s)" % ab_bl.vx)
+	# storms drag you down and slow you
+	var ab_q = air(0.0, 31.0, 25.0, 0.0)
+	ab_q.add_thing(FlightS.K_STORM, 3.0, 31.0)
+	var ab_q0 = air(0.0, 31.0, 25.0, 0.0)
+	ab_q.advance(0.6, false)
+	ab_q0.advance(0.6, false)
+	check(ab_q.storm_entries == 1 and ab_q.vx < ab_q0.vx - 1.5 and ab_q.vy < ab_q0.vy - 2.5, "a storm slows you and drags you down (%.1f/%.1f vs %.1f/%.1f)" % [ab_q.vx, ab_q.vy, ab_q0.vx, ab_q0.vy])
+	# finds: big money in the sky
+	var ab_fd = air(0.0, 60.0, 20.0, 0.0)
+	ab_fd.add_thing(FlightS.K_FIND, 3.0, 60.0, 0.0, 1, 200.0)
+	ab_fd.advance(0.4, false)
+	check(ab_fd.finds == 1 and ab_fd.picked_value == int(200.0 * tn.band_mult(3)), "an astronaut cat pays big (%d scrap)" % ab_fd.picked_value)
+	# the generator follows the glider, leads it between bands, keeps pads on the ground and finds for big launches
+	var ab_hi_y := 0.0
+	var ab_hi_n := 0
+	var ab_lo_y := 0.0
+	var ab_lo_n := 0
+	var ab_weaves := 0
+	var ab_finds_big := 0
+	var ab_finds_small := 0
+	var ab_pad_high := 0
+	for ab_case in 3:
+		var ab_alt: float = [6.0, 60.0, 18.0][ab_case]
+		var ab_lv: Dictionary = lv(10, 10, 10, 8, 0) if ab_case != 0 else lv()
+		var ab_gf = air(0.0, ab_alt + 0.55, 30.0, 0.0, 0.0, ab_lv)
+		ab_gf.rng.seed = 77 + ab_case
+		for ab_c in 300:
+			ab_gf.clear_things()
+			ab_gf.gen_x = 100.0
+			ab_gf._gen_chunk()
+			var ab_nuts := []
+			for ab_i in FlightS.MAX_THINGS:
+				if ab_gf.t_active[ab_i] == 0:
+					continue
+				var ab_kind: int = ab_gf.t_kind[ab_i]
+				if ab_kind != FlightS.K_PAD and ab_kind != FlightS.K_FAN:
+					if ab_case == 0:
+						ab_lo_y += ab_gf.t_y[ab_i]
+						ab_lo_n += 1
+					elif ab_case == 1:
+						ab_hi_y += ab_gf.t_y[ab_i]
+						ab_hi_n += 1
+				if ab_kind == FlightS.K_NUT:
+					ab_nuts.append(Vector2(ab_gf.t_x[ab_i], ab_gf.t_y[ab_i]))
+				if ab_kind == FlightS.K_PAD and ab_gf.t_y[ab_i] > 17.0:
+					ab_pad_high += 1
+				if ab_kind == FlightS.K_FIND:
+					if ab_case == 0:
+						ab_finds_small += 1
+					else:
+						ab_finds_big += 1
+			if ab_case == 2 and ab_nuts.size() >= 8:
+				ab_nuts.sort_custom(func(a, b): return a.x < b.x)
+				if ab_nuts[ab_nuts.size() - 1].y - ab_nuts[0].y > 8.0:
+					ab_weaves += 1
+	check(ab_hi_y / maxf(ab_hi_n, 1) > ab_lo_y / maxf(ab_lo_n, 1) + 25.0, "the sky follows you: content for a high glider averages %.0f m, for a low one %.0f m" % [ab_hi_y / maxf(ab_hi_n, 1), ab_lo_y / maxf(ab_lo_n, 1)])
+	check(ab_weaves > 3, "scrap arcs lead from one band up into the next (%d weaves in 300 chunks)" % ab_weaves)
+	check(ab_pad_high == 0, "no bounce pads up in the high bands")
+	check(ab_finds_small == 0 and ab_finds_big > 0, "finds only appear for big launches (%d for a small one, %d for a big one)" % [ab_finds_small, ab_finds_big])
+	# zones have their own air
+	var ab_skin := {}
+	for ab_zx in [2300.0, 1600.0, 4100.0, 7600.0]:
+		var ab_zf = air(0.0, 20.0, 30.0, 0.0)
+		ab_zf.rng.seed = 5
+		ab_skin[ab_zx] = {}
+		for ab_c in 400:
+			ab_zf.clear_things()
+			ab_zf.gen_x = ab_zx
+			ab_zf._gen_chunk()
+			for ab_i in FlightS.MAX_THINGS:
+				if ab_zf.t_active[ab_i] != 0 and (ab_zf.t_kind[ab_i] == FlightS.K_GOOSE or ab_zf.t_kind[ab_i] == FlightS.K_BALLOON):
+					ab_skin[ab_zx][ab_zf.t_kind[ab_i] * 10 + ab_zf.t_skin[ab_i]] = true
+	check(ab_skin[2300.0].keys() == [71, 51] or (ab_skin[2300.0].has(71) and ab_skin[2300.0].has(51) and ab_skin[2300.0].size() == 2), "Coast: seagulls and parasailers (%s)" % str(ab_skin[2300.0].keys()))
+	check(ab_skin[1600.0].has(73) and ab_skin[1600.0].has(50), "City: helicopters (%s)" % str(ab_skin[1600.0].keys()))
+	check(ab_skin[4100.0].has(75) and ab_skin[7600.0].has(75), "the Moon and Disco Planet fly UFOs")
+	# a typical flight passes through several bands, reacts to things all the time and never leaves the sky empty for long
+	var ab_bands_seen := [0.0, 0.0, 0.0, 0.0]
+	var ab_worst := 0.0
+	var ab_inter := 0
+	for ab_sd in 4:
+		var ab_p = FlightS.new()
+		ab_p.reset(lv(6, 6, 6, 4, 0), 300 + ab_sd)
+		ab_p.launch_auto()
+		var ab_t2 := 0.0
+		var ab_gap := 0.0
+		while not ab_p.is_over() and ab_t2 < 200.0:
+			ab_p.advance(1.0 / 60.0, ab_p.pilot(1.0 / 60.0, 1.0))
+			ab_p.ev_n = 0
+			ab_t2 += 1.0 / 60.0
+			if ab_p.phase == FlightS.PH_AIR:
+				var ab_any := false
+				for ab_i in FlightS.MAX_THINGS:
+					if ab_p.t_active[ab_i] != 0 and ab_p.t_x[ab_i] >= ab_p.x - 4.0 and ab_p.t_x[ab_i] < ab_p.x + 24.0 and absf(ab_p.t_y[ab_i] - ab_p.y) <= 24.0:
+						ab_any = true
+						break
+				ab_gap = 0.0 if ab_any else ab_gap + 1.0 / 60.0
+				ab_worst = maxf(ab_worst, ab_gap)
+		for ab_b2 in 4:
+			ab_bands_seen[ab_b2] += ab_p.band_time[ab_b2]
+		ab_inter += ab_p.interactions
+	var ab_visited := 0
+	for ab_b2 in 4:
+		if ab_bands_seen[ab_b2] > 2.0:
+			ab_visited += 1
+	check(ab_visited >= 3 and ab_inter > 25, "typical flights pass through %d bands and react to %d things (4 flights)" % [ab_visited, ab_inter])
+	check(ab_worst < 4.0, "the sky is never empty for long (worst gap %.1f s)" % ab_worst)
+	# HUD: the multiplier next to the distance, the band toast, popups and sounds for the air objects
+	main._to_shop()
+	main.launch()
+	main.frame(1.0 / 60.0, 1.0 / 60.0)
+	main.hud.set_flight(120.0, 0, 0, false, false, 2)
+	check(main.hud._mult.text == "HIGH x2" and main.hud._mult.is_visible_in_tree(), "the band and its multiplier show next to the distance (%s)" % main.hud._mult.text)
+	var ab_pl: Dictionary = main.sfx.plays
+	var ab_c0 := {}
+	for ab_n in ["ring", "band", "find", "storm", "boing"]:
+		ab_c0[ab_n] = int(ab_pl[ab_n])
+	var ab_fl = main.flight
+	ab_fl.push_event(ab_fl.EV_RING, ab_fl.x + 3.0, ab_fl.y, 6, 9)
+	ab_fl.push_event(ab_fl.EV_BAND, ab_fl.x, ab_fl.y, 2)
+	ab_fl.push_event(ab_fl.EV_FIND, ab_fl.x + 3.0, ab_fl.y + 2.0, 600, 1)
+	ab_fl.push_event(ab_fl.EV_STORM, ab_fl.x + 3.0, ab_fl.y, 0)
+	ab_fl.push_event(ab_fl.EV_BALLOON, ab_fl.x + 3.0, ab_fl.y, 15, 0)
+	main._handle_events()
+	var ab_texts := ""
+	for ab_pop in main.hud._pop_labels:
+		ab_texts += ab_pop.text + "|"
+	check(int(ab_pl["ring"]) == ab_c0["ring"] + 1 and int(ab_pl["band"]) == ab_c0["band"] + 1 and int(ab_pl["find"]) == ab_c0["find"] + 1 and int(ab_pl["storm"]) == ab_c0["storm"] + 1 and int(ab_pl["boing"]) == ab_c0["boing"] + 1, "rings, bands, finds, storms and balloons each have their sound")
+	check(ab_texts.contains("ASTRONAUT CAT") and ab_texts.contains("+600") and main.hud._toast.text.begins_with("HIGH AIR"), "the astronaut cat pops up with its pay, and entering high air says so (%s)" % ab_texts)
+	main._to_shop()
+	# missions that use the new content
+	var ab_new := ["ring", "balloon", "blimp", "tailwind", "highair", "find"]
+	var ab_stats := {"distance": 100.0, "picked_value": 30, "pad_bounces": 3, "skips": 4, "fan_entries": 2, "boosts_used": 0, "gears_picked": 2, "bird_hits": 0, "zone_max": 2,
+			"rings_hit": 5, "balloon_hits": 3, "blimp_hits": 2, "stream_time": 9.0, "high_time": 12.0, "finds": 1}
+	var ab_ok := true
+	var ab_text_ok := true
+	sv.reset_all()
+	sv.best_distance = 900.0
+	sv.levels["ramp"] = 8
+	for ab_ty in ab_new:
+		var ab_m: Dictionary = MissionsS.make(ab_ty, sv)
+		if not MissionsS.available(ab_ty, sv) or MissionsS.describe(ab_m).contains("?") or MissionsS.short_name(ab_m) == "?":
+			ab_text_ok = false
+		ab_m["target"] = 1
+		if not MissionsS.is_done(ab_m, ab_stats) or MissionsS.value_of(ab_m, ab_stats) < 1:
+			ab_ok = false
+		ab_m["target"] = 99
+		if MissionsS.is_done(ab_m, ab_stats):
+			ab_ok = false
+	check(ab_ok and ab_text_ok, "missions use the new content: rings, balloons, blimps, tailwind, high air and finds")
+	sv.reset_all()
+	check(not MissionsS.available("find", sv) and not MissionsS.available("highair", sv), "...and the hard ones wait until you can do them")
+	# pooled and pre-warmed: every skin was drawn at start-up, the pool never grew
+	var ab_seen: Dictionary = main.prewarm_air_seen
+	var ab_all_seen := true
+	for ab_k2 in [["balloon", 3], ["flock", 6], ["kite", 3], ["storm", 3], ["find", 4], ["blimp", 3]]:
+		for ab_j in int(ab_k2[1]):
+			if not ab_seen.has("%s%d" % [ab_k2[0], ab_j]):
+				ab_all_seen = false
+	check(ab_all_seen and main.flight.t_active.size() == FlightS.MAX_THINGS and main.flight.t_skin.size() == FlightS.MAX_THINGS, "every air object and skin was drawn in the pre-warm; the thing pool is fixed size (%d)" % FlightS.MAX_THINGS)
+	main.hud.show_results(false)
+	main._to_shop()
 
 	print("6. save file")
 	sv.reset_all()

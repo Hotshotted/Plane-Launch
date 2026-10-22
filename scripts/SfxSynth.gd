@@ -85,6 +85,20 @@ func _build_effects_into(clips: Dictionary) -> void:
 	clips["snap"] = _norm(_reverb(_mix_at(_pluck(note_hz(8), note_hz(3), 0.32), _knock(900.0, 0.03), 0), 0.2, 0.25), LVL_GAME)
 	# Catapult: a low whoosh and thud.
 	clips["swing"] = _norm(_reverb(_mix_at(_whoosh(0.45, 180.0, 520.0), _thud(0.35), int(0.3 * rate)), 0.2, 0.3), LVL_GAME)
+	# A boost ring: three quick rising bells (C, E, G).
+	var ring := PackedFloat32Array()
+	for k in 3:
+		ring = _mix_at(ring, _bell(note_hz(5 + k), 0.5, 1.0, 1.0), int(k * 0.07 * rate))
+	clips["ring"] = _norm(_reverb(ring, 0.3, 0.4), LVL_GAME)
+	# A storm cloud: a soft low rumble swelling in.
+	clips["storm"] = _norm(_reverb(_mix_at(_whoosh(0.6, 120.0, 420.0), _thud(0.5), int(0.1 * rate)), 0.2, 0.3), LVL_GAME * 0.9)
+	# A new altitude band: a small two-note chime (G then C).
+	clips["band"] = _norm(_reverb(_mix_at(_bell(note_hz(3), 0.35, 1.0, 0.8), _bell(note_hz(5), 0.5, 0.9, 0.8), int(0.08 * rate)), 0.25, 0.3), LVL_UI * 1.4)
+	# A joke find: a quick silly run up the scale and a wobbling top note.
+	var fnd := PackedFloat32Array()
+	for k in 5:
+		fnd = _mix_at(fnd, _bell(note_hz([5, 7, 8, 9, 10][k]), 0.8 if k == 4 else 0.35, 1.0, 1.0), int(k * 0.075 * rate))
+	clips["find"] = _norm(_reverb(fnd, 0.4, 0.7), LVL_BIG)
 	# Rocket sled: a big low swell.
 	clips["ignite"] = _norm(_reverb(_swell(1.1), 0.25, 0.4), LVL_BIG * 0.9)
 
