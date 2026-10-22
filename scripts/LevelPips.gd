@@ -6,6 +6,7 @@ var level := 0
 var max_level := 10
 var fill := Style.ACCENT
 var empty := Color(Style.INK, 0.55)
+var fixed_d := 0.0              # > 0: dots of this size packed together, right-aligned (the boost charges)
 var pop := 0.0                  # 1 -> 0 right after a purchase: the newest dot pops in
 
 ## The newest dot pops in (the buy sequence).
@@ -32,8 +33,13 @@ func _draw() -> void:
 	var n := maxi(max_level, 1)
 	var d := minf(size.y, (size.x / n) * 0.8)
 	var step := (size.x - d) / maxf(n - 1, 1)
+	var x0 := 0.0
+	if fixed_d > 0.0:
+		d = fixed_d
+		step = d * 1.4
+		x0 = size.x - (n - 1) * step - d
 	for i in n:
-		var c := Vector2(d * 0.5 + i * step, size.y * 0.5)
+		var c := Vector2(x0 + d * 0.5 + i * step, size.y * 0.5)
 		var k := 1.0
 		if pop > 0.0 and i == level - 1:
 			k = 1.0 + 0.9 * sin(pop * PI) * pop     # a quick overshoot

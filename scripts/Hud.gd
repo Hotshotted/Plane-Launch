@@ -66,7 +66,7 @@ var _hint: Label
 var _banner: Label
 var _banner_born := -10.0
 var _boost_panel: PanelContainer
-var _boost_pips: Label
+var _boost_pips: LevelPips
 var _boost_style: StyleBoxFlat
 var _pop_labels: Array[Label] = []
 var _pop_styles: Array[StyleBoxFlat] = []
@@ -607,7 +607,10 @@ func _build_flight_hud() -> void:
 	bl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_boost_panel.add_child(bl)
 	_flight_root.add_child(_boost_panel)
-	_boost_pips = _label(BODY, Glyphs.FLAME, HORIZONTAL_ALIGNMENT_RIGHT, 8)
+	_boost_pips = LevelPips.new()
+	_boost_pips.fill = Glyphs.FLAME
+	_boost_pips.fixed_d = 34.0
+	_boost_pips.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_boost_pips.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 	_boost_pips.offset_left = -640
 	_boost_pips.offset_right = -290
@@ -654,10 +657,7 @@ func set_flight(distance: float, charges: int, charges_max: int, boosting: bool,
 	var pips_key := charges * 100 + charges_max
 	if pips_key != _last_pips:
 		_last_pips = pips_key
-		var s := ""
-		for i in charges_max:
-			s += "●" if i < charges else "○"
-		_boost_pips.text = s
+		_boost_pips.set_level(charges, charges_max)
 	_boost_panel.visible = charges_max > 0
 	_boost_pips.visible = charges_max > 0
 	_boost_style.bg_color = Style.ACCENT if boosting else (Glyphs.FLAME if charges > 0 else Style.SURFACE_DARK_2)
@@ -1239,7 +1239,7 @@ func _refresh_style() -> void:
 		var d: Dictionary = list[k]
 		var on: bool = Save.equipped(kind) == d["id"]
 		r["icon"].set_glyph(kind if kind == "paint" else ("hat_" + d["id"] if kind == "hat" and d["id"] != "none" else ("trail_" + d["id"] if kind == "trail" and d["id"] != "none" else "close")), Style.TEXT, d.get("color", Color(0, 0, 0, 0)) if kind == "paint" else Color(0, 0, 0, 0))
-		r["name"].text = d["name"] + ("   ✓" if on else "")
+		r["name"].text = d["name"]
 		r["eff"].text = "Whiskers' hat" if kind == "hat" else ("Paint job" if kind == "paint" else "Trail")
 		if on:
 			_look(r["btn"], 2, "WORN")
@@ -1364,7 +1364,7 @@ func _fill_results(last: Dictionary) -> void:
 	_res_detail.text = detail
 	var ml := ""
 	for m in last["missions"]:
-		ml += "%s✓ %s   +%s" % ["\n" if ml != "" else "", m["text"], Tuning.fmt(m["reward"])]
+		ml += "%s%s   +%s" % ["\n" if ml != "" else "", m["text"], Tuning.fmt(m["reward"])]
 	_res_missions.text = ml
 	_res_missions.visible = ml != ""
 	_res_mcap.visible = ml != ""
@@ -1424,7 +1424,7 @@ func refresh_shop(last: Dictionary, boost_ready: bool = false) -> void:
 		var fd: Dictionary = Tuning.frames[i]
 		var fr: Dictionary = _frame_rows[i]
 		fr["icon"].set_kind(fd["id"])
-		fr["name"].text = fd["name"] + ("   ✓" if Save.frame == fd["id"] else "")
+		fr["name"].text = fd["name"]
 		fr["eff"].text = fd["desc"]
 		if Save.frame == fd["id"]:
 			_look(fr["btn"], 2, "FLYING")
@@ -1436,7 +1436,7 @@ func refresh_shop(last: Dictionary, boost_ready: bool = false) -> void:
 		var ld: Dictionary = Tuning.launchers[i]
 		var lr: Dictionary = _launcher_rows[i]
 		lr["icon"].set_kind(ld["id"])
-		lr["name"].text = ld["name"] + ("   ✓" if Save.launcher == ld["id"] else "")
+		lr["name"].text = ld["name"]
 		lr["eff"].text = "%s  (%d m/s)" % [ld["desc"], roundi(Tuning.launcher_speed(ld["id"], Save.level("ramp")))]
 		if Save.launcher == ld["id"]:
 			_look(lr["btn"], 2, "IN USE")
@@ -1740,14 +1740,14 @@ func prewarm_show(on: bool) -> void:
 		_best.text = "BEST 1234 m"
 		_toast.text = "Bounces 2/3"
 		_banner.text = "NEW ZONE!\nCLOUD KINGDOM\n+1,900 scrap"
-		_boost_pips.text = "●●●●○○"
+		_boost_pips.set_level(4, 6)
 		_res_caption.text = "LANDED"
 		_res_dist.text = "1,234 m"
 		_res_badge.text = "NEW BEST!"
 		_res_scrap.text = "+999 scrap"
 		_res_detail.text = "88 distance  ·  7 from 3 pickups  ·  4 zone bonus\nFarthest zone: Cheese Moon"
 		_res_mcap.visible = true
-		_res_missions.text = "✓ Collect 40 scrap in one flight   +45"
+		_res_missions.text = "Collect 40 scrap in one flight   +45"
 		_res_new.text = "New mission: Reach the River without boosting"
 		_res_rusty.text = "Rusty: " + Rusty.GREETING
 		_set_bar(_shop_bar, 3, 0.5)

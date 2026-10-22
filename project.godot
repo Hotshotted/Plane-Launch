@@ -8,7 +8,9 @@ config/description="Junkyard Launch by Clear Prop Games: an incremental glide-di
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.5", "GL Compatibility")
 config/icon="res://icon.svg"
-boot_splash/show_image=false
+boot_splash/image="res://assets/splash.png"
+boot_splash/fullsize=false
+boot_splash/use_filter=true
 boot_splash/bg_color=Color(0.078, 0.129, 0.239, 1)
 
 [autoload]

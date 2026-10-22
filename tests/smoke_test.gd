@@ -294,14 +294,14 @@ func _initialize() -> void:
 	main.hud._launch_btn.pressed.emit()
 	for i in 90:
 		main.frame(1.0 / 60.0, 1.0 / 60.0)
-	check(main.hud._boost_pips.visible and main.hud._boost_pips.text == "●●●", "boost charges show as pips beside the button (%s)" % main.hud._boost_pips.text)
+	check(main.hud._boost_pips.visible and main.hud._boost_pips.level == 3 and main.hud._boost_pips.max_level == 3, "boost charges show as dots beside the button (%d/%d)" % [main.hud._boost_pips.level, main.hud._boost_pips.max_level])
 	var rect_b: Rect2 = main.hud.boost_rect()
 	var cam0: float = main.world.cam_x
 	touch(main, rect_b.get_center(), true, 4)
 	touch(main, rect_b.get_center(), false, 4)
 	main.frame(1.0 / 60.0, 1.0 / 60.0)
 	check(main._kick > 0.8 and main.world.boost_fx > 0.5, "a boost kicks the camera and starts the speed lines")
-	check(main.hud._boost_pips.text == "●●○", "a charge is spent (%s)" % main.hud._boost_pips.text)
+	check(main.hud._boost_pips.level == 2 and main.hud._boost_pips.max_level == 3, "a charge is spent (%d/%d)" % [main.hud._boost_pips.level, main.hud._boost_pips.max_level])
 	var flames: int = main.world.live_particles()
 	check(flames >= 3, "the flame trail spawns particles (%d)" % flames)
 	for i in 120:
@@ -878,7 +878,7 @@ func _initialize() -> void:
 	check(not main.hud.ad_active and not main.hud._ad_screen.visible and main.bonus_charge == 1 and main.hud._ad_boost_btn.text.contains("READY") and main.hud._ad_boost_btn.disabled, "the ad ends and grants the free boost charge")
 	main.hud._launch_btn.pressed.emit()
 	main.frame(1.0 / 60.0, 1.0 / 60.0)
-	check(main.flight.charges == 1 and main.flight.charges_max == 1 and main.bonus_charge == 0 and main.hud._boost_pips.text == "●", "the free charge is in the next flight (a BOOST button even without a Booster)")
+	check(main.flight.charges == 1 and main.flight.charges_max == 1 and main.bonus_charge == 0 and main.hud._boost_pips.level == 1 and main.hud._boost_pips.max_level == 1, "the free charge is in the next flight (a BOOST button even without a Booster)")
 	touch(main, Vector2(500, 900), false)
 	fly_main(main)
 	check(main.bonus_charge == 0 and main.hud._ad_boost_btn.text.contains("FREE BOOST"), "it is used up after one launch")
@@ -1017,7 +1017,7 @@ func _initialize() -> void:
 	var names: Array[String] = []
 	for l in flight_labels:
 		names.append(l.text)
-	check(flight_labels.size() == 4 and main.hud._dist in flight_labels and main.hud._best in flight_labels and main.hud._boost_pips in flight_labels, "flight screen: only distance, best line, boost button and pips are on screen (%s)" % str(names))
+	check(flight_labels.size() == 3 and main.hud._dist in flight_labels and main.hud._best in flight_labels and main.hud._boost_pips.visible, "flight screen: only distance, best line, boost button and pips are on screen (%s)" % str(names))
 	var fsizes := {}
 	font_sizes(main.hud._flight_root, fsizes)
 	check(fsizes.size() <= 3 and main.hud._dist.get_theme_font_size("font_size") == HudS.HERO, "flight screen: distance is the biggest text, at most three sizes (%s)" % str(fsizes.keys()))
@@ -1216,6 +1216,28 @@ func _initialize() -> void:
 			not_in_set.append(gid)
 	check(not_in_set.is_empty(), "every upgrade, frame, launcher, hat, trail and mission has an icon (missing: %s)" % str(not_in_set))
 	check(main.hud._launch_btn.get_theme_stylebox("normal").bg_color == StyleS.SUCCESS and main.hud._launch_btn.get_theme_stylebox("pressed") != main.hud._launch_btn.get_theme_stylebox("normal"), "LAUNCH is the primary button: green with a lip, and a distinct pressed look")
+	# consistency sweep: every label and button anywhere in the HUD uses only the three shared sizes, and no emoji or symbol characters
+	var sweep_sizes := {}
+	var sweep_bad: Array[String] = []
+	var sweep_stack: Array[Node] = [main.hud]
+	while not sweep_stack.is_empty():
+		var sn: Node = sweep_stack.pop_back()
+		for sc in sn.get_children():
+			sweep_stack.append(sc)
+		if (sn is Label or sn is Button) and sn != main.hud._stamp:
+			sweep_sizes[(sn as Control).get_theme_font_size("font_size")] = true
+			var txt: String = (sn as Label).text if sn is Label else (sn as Button).text
+			for ci5 in txt.length():
+				var cp := txt.unicode_at(ci5)
+				if (cp >= 0x2190 and cp <= 0x2BFF) or cp >= 0x1F000:
+					sweep_bad.append(txt)
+					break
+	var allowed_sizes := true
+	for k5 in sweep_sizes:
+		if not [110, 56, 30, 16].has(int(k5)):
+			allowed_sizes = false
+	check(allowed_sizes, "every label and button uses the shared sizes (%s)" % str(sweep_sizes.keys()))
+	check(sweep_bad.is_empty(), "no emoji or symbol characters in the UI (%s)" % str(sweep_bad))
 	# safe areas: a second HUD built with insets keeps everything inside them
 	StyleS.set_safe(120.0, 90.0, 0.0, 0.0)
 	var safe_hud: Node = HudS.new()
@@ -1426,6 +1448,68 @@ func _initialize() -> void:
 	main.world._outline = true
 	check(main.world._ink() == Color(0, 0, 0), "interactive objects keep their black outline")
 	main._to_shop()
+
+	print("5e. audio: object, launcher and landing sounds, wind, rumble, music crossfade")
+	main._to_shop()
+	check(main.sfx.music_mode == "garage" and not main.sfx.rumbling and main.sfx.wind_level == 0.0, "the launch screen has the garage music and no wind")
+	main.launch()
+	check(main.sfx.music_mode == "flight", "a flight crossfades to the flight music")
+	var fl5e = main.flight
+	var pl5e: Dictionary = main.sfx.plays
+	var b5e := {}
+	for n5e in ["clink", "boing", "squawk", "fan", "boost", "crunch", "splash", "snap", "swing", "ignite"]:
+		b5e[n5e] = int(pl5e[n5e])
+	fl5e.push_event(fl5e.EV_SCRAP, fl5e.x + 3.0, fl5e.y, 1)
+	fl5e.push_event(fl5e.EV_PAD, fl5e.x + 4.0, 0.5, 9)
+	fl5e.push_event(fl5e.EV_BIRD, fl5e.x + 5.0, fl5e.y, 4)
+	fl5e.push_event(fl5e.EV_FAN, fl5e.x + 6.0, fl5e.y, 0)
+	fl5e.push_event(fl5e.EV_BOOST, fl5e.x, fl5e.y, 5)
+	fl5e.push_event(fl5e.EV_SKIP, fl5e.x + 7.0, 0.0, 1)
+	fl5e.push_event(fl5e.EV_LAND, fl5e.x + 8.0, 0.0)
+	main._handle_events()
+	check(int(pl5e["clink"]) == b5e["clink"] + 1 and int(pl5e["boing"]) == b5e["boing"] + 1 and int(pl5e["squawk"]) == b5e["squawk"] + 1 and int(pl5e["fan"]) == b5e["fan"] + 1, "scrap clinks, pads boing, birds squawk, fans whoosh")
+	check(int(pl5e["boost"]) == b5e["boost"] + 1 and int(pl5e["splash"]) == b5e["splash"] + 1 and int(pl5e["crunch"]) == b5e["crunch"] + 1, "the booster roars, water splashes, the landing crunches")
+	# launcher sounds
+	var snd5e := {"sling": "snap", "catapult": "swing", "sled": "ignite"}
+	for lid5e in snd5e:
+		var c0: int = int(pl5e[snd5e[lid5e]])
+		sv.launcher = lid5e
+		main._to_shop()
+		main.launch()
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+		check(int(pl5e[snd5e[lid5e]]) == c0 + (0 if lid5e == "sling" else 1), "%s has its own launch sound (%s)" % [lid5e, snd5e[lid5e]])
+		if lid5e == "sling":
+			main.flight.set_aim(1.0, tn.sling_default_angle)
+			main.flight.fire()
+			main._handle_events()
+			check(int(pl5e["snap"]) == c0 + 1, "the slingshot twangs when it is released")
+	sv.launcher = "ramp"
+	main._to_shop()
+	main.launch()
+	var rumbled := false
+	var steps5e := 0
+	while main.flight.phase != main.flight.PH_AIR and steps5e < 900:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+		rumbled = rumbled or main.sfx.rumbling
+		steps5e += 1
+	main.frame(1.0 / 60.0, 1.0 / 60.0)
+	check(rumbled and not main.sfx.rumbling, "the ramp rumbles on the way down and stops at the lip")
+	main.flight.vx = 70.0
+	main.flight.vy = 0.0
+	for k in 30:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+		main.flight.vx = maxf(main.flight.vx, 70.0)
+	var wind_fast: float = main.sfx.wind_level
+	main.flight.vx = 20.0
+	for k in 30:
+		main.frame(1.0 / 60.0, 1.0 / 60.0)
+		main.flight.vx = minf(main.flight.vx, 20.0)
+	check(wind_fast > 0.6 and main.sfx.wind_level < wind_fast - 0.3, "wind rises with speed (%.2f fast, %.2f slow)" % [wind_fast, main.sfx.wind_level])
+	main.set_paused(true)
+	check(main.sfx.wind_level == 0.0, "pausing silences the wind")
+	main.set_paused(false)
+	main._to_shop()
+	check(main.sfx.music_mode == "garage" and main.sfx.wind_level == 0.0, "back in the garage: garage music, no wind")
 
 	print("6. save file")
 	sv.reset_all()

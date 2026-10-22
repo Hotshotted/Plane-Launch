@@ -90,6 +90,21 @@ arrivals, ease-in-cubic for exits, ease-out-back for things that land. Anything 
 * **Flight:** speed lines and wind streaks scale with speed, bounces lay a dust trail, touchdown is a crunch (debris, kick) followed by a tumble that hops along the ground.
 * **Feedback popups** are chips: a dark pill with a coloured rim, the icon of what happened and the words, popping in and floating up.
 
+## Audio
+
+All procedural (`scripts/Sfx.gd`, no audio files), on two buses: **SFX** and **Music**, with their volumes in the pause menu (saved). Short, soft and rounded.
+
+* **UI:** a soft click when a finger goes down (`press`), a bright blip going forward (`tap`), a falling pair going back (`back`), a rising ping for a purchase (`buy`), a metal `clank` when a part bolts on, a `stamp` on paper, `tick`s while the distance counts up, a small fanfare for a new best (`best`).
+* **World:** scrap `clink`s (pitch varies), pads `boing`, birds `squawk`, fans whoosh (`fan`), the booster roars (`boost`), water `splash`es, the landing `crunch`es, a stall buzzes.
+* **Launchers:** the ramp and sled rumble (a loop that stops at the lip), the slingshot `snap`s, the catapult `swing`s, the sled `ignite`s.
+* **Wind:** a loop whose volume and pitch rise with speed; silent when paused.
+* **Music:** a calm layer for the garage; flight adds a driving layer. Layers glide between levels (at most 40 dB a second), never cut, so garage to flight to garage is one continuous mix.
+
+## App icon, splash, performance
+
+* **Icon** (`icon.svg`, rendered to `icons/` by `tools/make_icons.gd`): Whiskers in his top hat in the gold glider leaving a rusty ramp, on the family sky-blue rounded square with the top highlight. **Splash** (`assets/splash.png`): the icon and the studio propeller on the brand navy `#14213d`, the same colour as the web loading page and the boot colour, so there is no seam from the page to the game.
+* **Performance** (`?perf`): the CPU cost of a flight frame (simulation, drawing, UI) is under 9 ms in every zone (headless run through all 11 zones). Under software GL (no GPU) at 540 x 960 frames average 18 to 24 ms, with a handful of single frames up to 37 ms (Hills, Disco Planet, Junkyard) out of 2,000; real devices render far faster. Nothing is created in flight: particles, popups, coins and stars are pooled and pre-warmed.
+
 ## Studio mark and loading
 
 The studio is **Clear Prop Games**; its mark is a bold three-blade propeller over a gold hub, with the name set in

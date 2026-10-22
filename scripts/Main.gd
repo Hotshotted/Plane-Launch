@@ -218,6 +218,9 @@ func _to_shop(snap: bool = true, results: bool = false) -> void:
 	flight.best_x = Save.best_distance
 	_set_best_text()
 	paused = false
+	sfx.set_music("garage")
+	sfx.set_wind(0.0)
+	sfx.set_rumble(false)
 	world.rumble = 0.0
 	world.speed_fx = 0.0
 	world.tumble = 0.0
@@ -270,6 +273,7 @@ func _start_flight(daily: bool) -> void:
 		_touch_hold[i] = 0
 		_touch_boost[i] = 0
 	world.ambience = false
+	sfx.set_music("flight")
 	_prev_phase = -1
 	_dust_left = 0.0
 	hud.set_mode(Hud.MODE_FLIGHT)
@@ -342,6 +346,9 @@ func set_paused(on: bool) -> void:
 	if on and (state != STATE_FLIGHT or flight.phase == Flight.PH_DONE):
 		return
 	paused = on
+	if on:
+		sfx.set_wind(0.0)
+		sfx.set_rumble(false)
 	hud.show_pause(on)
 	clear_input()
 	if not on:
@@ -686,6 +693,7 @@ func _handle_events() -> void:
 		match flight.ev_kind[k]:
 			Flight.EV_SCRAP:
 				world.burst(WorldView.P_SPARK, ex, ey, 5, 6.0, 0.4, 0.3, Hud.C_GOLD, rng)
+				sfx.play("clink", 0.9 + rng.randf() * 0.35)
 				var scrap_text := "SCRAP! +%d" % flight.ev_val[k] if Save.mark_seen("scrap") else "+%d" % flight.ev_val[k]
 				hud.popup(scrap_text, world.to_screen(ex, ey) + Vector2(0, -50), Hud.C_GOLD, "scrap")
 			Flight.EV_PAD:
@@ -693,17 +701,21 @@ func _handle_events() -> void:
 				var pad_text := "BOUNCE! +speed" if Save.mark_seen("pad") else "BOUNCE! +%d m/s" % flight.ev_val[k]
 				hud.popup(pad_text, world.to_screen(ex, ey) + Vector2(0, -160), Hud.C_ACCENT, "bounce")
 				_buzz(25)
+				sfx.play("boing")
 				_dust_left = 0.6
 			Flight.EV_BIRD:
 				world.burst(WorldView.P_FEATHER, ex, ey, 9, 7.0, 0.8, 0.5, Color(0.8, 0.75, 0.95), rng)
 				var bird_text := "BIRD! -speed" if Save.mark_seen("bird") else "BIRD! -%d m/s" % flight.ev_val[k]
 				hud.popup(bird_text, world.to_screen(ex, ey) + Vector2(0, -100), Hud.C_DANGER, "nobird")
 				_buzz(60)
+				sfx.play("squawk", 0.9 + rng.randf() * 0.25)
 			Flight.EV_FAN:
+				sfx.play("fan")
 				var fan_text := "UPDRAFT! +height" if Save.mark_seen("fan") else "UPDRAFT!"
 				hud.popup(fan_text, world.to_screen(ex, ey) + Vector2(0, -140), Hud.C_TEXT, "updraft")
 			Flight.EV_BOOST:
 				_kick = 1.0
+				sfx.play("boost")
 				hud.popup("BOOST +%d m/s" % flight.ev_val[k], world.to_screen(ex, ey) + Vector2(0, -160), Hud.C_ACCENT, "boost")
 				_buzz(40)
 			Flight.EV_LAND:
@@ -712,6 +724,7 @@ func _handle_events() -> void:
 				world.burst(WorldView.P_SCRAP, ex, 0.6, 12, 9.0, 1.0, 0.4, Color(0.6, 0.6, 0.62), rng)
 				world.burst(WorldView.P_SPARK, ex, 0.4, 8, 7.0, 0.5, 0.3, Color(1.0, 0.8, 0.3), rng)
 				_kick = 1.0
+				sfx.play("crunch")
 				_tumble_w = clampf(flight.vx * 0.3, 3.0, 10.0)
 				_tumble_a = 0.0
 				_hop_y = 0.0
@@ -720,12 +733,14 @@ func _handle_events() -> void:
 			Flight.EV_ZONE:
 				var zn := Tuning.zone_name(flight.ev_val[k])
 				if flight.ev_val[k] > Save.zone_best:
+					sfx.play("unlock")
 					hud.banner("NEW ZONE!\n%s\n+%s scrap" % [zn.to_upper(), Tuning.fmt(Tuning.zone_bonus(flight.ev_val[k]))], Hud.C_ACCENT)
 					_buzz(70)
 				else:
 					hud.banner(zn.to_upper(), Hud.C_TEXT)
 			Flight.EV_SKIP:
 				var cloud := flight.ev_val[k] == 2
+				sfx.play("boing" if cloud else "splash")
 				world.burst(WorldView.P_SPARK, ex, 0.4, 7, 6.0, 0.5, 0.35, Color(1, 1, 1) if cloud else Color(0.6, 0.85, 1.0), rng)
 				var skip_text := ("BOING!" if cloud else "SKIP!") + (" +bounce" if Save.mark_seen("cloud" if cloud else "water") else "")
 				hud.popup(skip_text, world.to_screen(ex, 1.5) + Vector2(0, -100), Hud.C_TEXT, "skip")
@@ -733,6 +748,8 @@ func _handle_events() -> void:
 				_dust_left = 0.4
 			Flight.EV_LAUNCH:
 				_launch_fx()
+			Flight.EV_STALL:
+				sfx.play("stall")
 			Flight.EV_TARGET:
 				hud.popup("TARGET REACHED!", Vector2(_view_size().x * 0.5, 330.0), Hud.C_ACCENT, "flag")
 			Flight.EV_BEST:
@@ -744,14 +761,17 @@ func _launch_fx() -> void:
 	match flight.launcher_id:
 		"sling":
 			var fork := Vector2(0.0, 5.0)
+			sfx.play("snap")
 			world.burst(WorldView.P_SPARK, fork.x, fork.y, 10, 8.0, 0.5, 0.3, Color(0.95, 0.4, 0.3), rng)
 			_kick = 1.0
 			_buzz(60)
 		"catapult":
+			sfx.play("swing")
 			world.burst(WorldView.P_DUST, flight.pivot.x, 0.4, 12, 6.0, 0.8, 0.7, Color(0.7, 0.6, 0.45), rng)
 			_kick = 0.5
 			_buzz(40)
 		"sled":
+			sfx.play("ignite")
 			world.burst(WorldView.P_FLAME, flight.x - 2.5, flight.y, 14, 7.0, 0.6, 1.0, Color(1.0, 0.6, 0.15), rng)
 			world.burst(WorldView.P_DUST, flight.x - 2.5, flight.y, 10, 5.0, 0.9, 0.9, Color(0.75, 0.75, 0.78), rng)
 			_kick = 0.7
@@ -783,6 +803,7 @@ func _flight_fx(delta: float) -> void:
 	_prev_phase = ph
 	var rumbling := ph == Flight.PH_RAMP and (flight.launcher_id == "ramp" or flight.launcher_id == "sled")
 	world.rumble = clampf(flight.ramp_speed / maxf(flight.lip_speed, 1.0), 0.25, 1.0) if rumbling else 0.0
+	sfx.set_rumble(rumbling)
 	if rumbling and flight.launcher_id == "sled":
 		_smoke_t -= delta
 		if _smoke_t <= 0.0:
@@ -790,6 +811,7 @@ func _flight_fx(delta: float) -> void:
 			world.spawn(WorldView.P_DUST, flight.x - 3.0, flight.y - 0.4, -4.0 - rng.randf() * 3.0, rng.randf() * 2.0, 0.7, 0.9, Color(0.8, 0.8, 0.82))
 	var spd := flight.speed() if ph == Flight.PH_AIR else 0.0
 	world.speed_fx = clampf((spd - 30.0) / 60.0, 0.0, 1.0)
+	sfx.set_wind(clampf(spd / 90.0, 0.0, 1.0) if not paused else 0.0)
 	if spd > 36.0:
 		_wind_t -= delta
 		if _wind_t <= 0.0:

@@ -1,1 +1,50 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" rx="24" fill="#6fb7e8"/><polygon points="14,98 114,98 114,112 14,112" fill="#6b5a45" stroke="#000" stroke-width="4"/><polygon points="26,70 98,56 104,66 34,82" fill="#d9822b" stroke="#000" stroke-width="4"/><polygon points="40,52 92,40 96,50 44,62" fill="#c9c9c9" stroke="#000" stroke-width="4"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5aa9ff"/>
+      <stop offset="1" stop-color="#2459c4"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe066"/>
+      <stop offset="1" stop-color="#ffb01f"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="10"/></filter>
+    <clipPath id="tile"><rect width="512" height="512" rx="112"/></clipPath>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#sky)"/>
+  <rect width="512" height="260" rx="112" fill="url(#sheen)"/>
+  <g clip-path="url(#tile)">
+    <!-- the junkyard ramp: rusty deck on struts, curving up at the lip -->
+    <g stroke="#0a1020" stroke-width="14" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M96 330 L96 540 M200 372 L200 540 M304 392 L304 540" fill="none" stroke-width="16" stroke="#8a3f1f"/>
+      <path d="M-20 300 C110 330 250 395 340 395 C400 395 450 370 540 320 L540 372 C450 420 400 450 340 450 C250 450 110 385 -20 352 Z" fill="#c8683a"/>
+    </g>
+    <path d="M-20 300 C110 330 250 395 340 395 C400 395 450 370 540 320" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="6"/>
+  </g>
+  <!-- the glider launching off the lip: soft shadow, chunky gold body, dark outline -->
+  <g transform="translate(262 196) rotate(-18)">
+    <g filter="url(#soft)" opacity="0.45" transform="translate(12 20)">
+      <path d="M-170 10 L-120 -22 L90 -30 C140 -28 170 -8 175 14 C150 40 100 46 40 46 L-120 40Z" fill="#0a1020"/>
+      <path d="M-10 -26 L-90 -110 L-30 -120 L70 -34Z" fill="#0a1020"/>
+    </g>
+    <g stroke="#0a1020" stroke-width="12" stroke-linejoin="round">
+      <path d="M-170 10 L-215 -54 L-186 -56 L-128 -14Z" fill="#ff9f2e"/>
+      <path d="M-170 10 L-120 -22 L90 -30 C140 -28 170 -8 175 14 C150 40 100 46 40 46 L-120 40Z" fill="url(#gold)"/>
+      <path d="M-10 -26 L-92 -112 L-30 -124 L72 -34Z" fill="#ffffff"/>
+      <circle cx="-60" cy="52" r="24" fill="#2a2d36"/>
+      <circle cx="70" cy="52" r="24" fill="#2a2d36"/>
+    </g>
+    <circle cx="-60" cy="52" r="9" fill="#c9d3e6"/>
+    <circle cx="70" cy="52" r="9" fill="#c9d3e6"/>
+    <!-- Whiskers in his top hat -->
+    <circle cx="26" cy="-46" r="26" fill="#f0c8a0" stroke="#0a1020" stroke-width="10"/>
+    <circle cx="36" cy="-50" r="6" fill="#ffffff"/>
+    <rect x="2" y="-122" width="46" height="46" rx="6" fill="#14213d" stroke="#0a1020" stroke-width="8"/>
+    <rect x="-14" y="-82" width="78" height="14" rx="6" fill="#14213d" stroke="#0a1020" stroke-width="8"/>
+    <rect x="2" y="-96" width="46" height="9" fill="#ff5c4d"/>
+  </g>
+</svg>
